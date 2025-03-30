@@ -1,81 +1,57 @@
 """
 Document processing module for ProfileDash
-Handles document upload and preprocessing
+Handles document upload and preprocessing using base64 encoding for Gemini.
 """
 
 import os
 import base64
-import tkinter as tk
-from tkinter import filedialog
-from .html_generator import extract_text_from_html
+import traceback
 
-def upload_documents():
+# upload_documents (tkinter) and get_current_documents (global state) are removed.
+
+def load_document_content(uploaded_data):
     """
-    Open a file dialog to select PDF files
-    Returns a dictionary of filename: content pairs
+    Process uploaded documents (passed as a dict of filename: bytes)
+    and convert to base64 format needed for the Gemini API multi-modal input.
+
+    Args:
+        uploaded_data (dict): Dictionary where keys are filenames and values
+                              are the binary content (bytes) of the PDF files.
+
+    Returns:
+        list: A list of document dictionaries suitable for the Generative AI API,
+              e.g., [{'mime_type': 'application/pdf', 'data': 'base64encodedstring...'}]
+              Returns an empty list if no documents could be processed.
     """
-    # Create and hide the root window
-    root = tk.Tk()
-    root.withdraw()
-    
-    # Open file dialog
-    files = filedialog.askopenfilenames(
-        title='Select PDF files',
-        filetypes=[('PDF files', '*.pdf')]
-    )
-    
-    # Create a dictionary similar to files.upload() return format
-    uploaded = {}
-    for file_path in files:
-        with open(file_path, 'rb') as file:
-            filename = os.path.basename(file_path)  # Get just the filename
-            uploaded[filename] = file.read()
-    
-    # Print info about uploaded files
-    for fn in uploaded.keys():
-        print('User uploaded file "{name}" with length {length} bytes'.format(
-            name=fn, length=len(uploaded[fn])))
-    
-    return uploaded
+    documents_for_api = []
+    # Print message confirming THIS version is running
+    print(f"Document Processor: Starting base64 encoding for {len(uploaded_data)} files...")
 
-
-# Global variable to store current documents
-_current_documents = []
-
-def get_current_documents():
-    """Return a copy of the current documents"""
-    return _current_documents.copy()
-
-def load_document_content(uploaded):
-    """
-    Process uploaded documents and convert to format needed for API
-    Returns a list of document dictionaries with extracted text
-    """
-    global _current_documents
-    documents = []
-    
-    for fn in uploaded.keys():
-        file_content = uploaded[fn]
+    for filename, file_content_bytes in uploaded_data.items():
+        # Print message confirming loop within THIS version
+        print(f"Document Processor: Encoding file '{filename}'...")
         try:
-            # Extract text from PDF
-            text_content = extract_text_from_html(file_content)
-            if not text_content:
-                print(f"Warning: No text content extracted from {fn}")
+            if not file_content_bytes:
+                print(f"Document Processor Warning: Skipping empty file {filename}.")
                 continue
-                
-            # Add document with extracted text
-            documents.append({
-                'mime_type': 'text/plain',
-                'data': text_content
+
+            # Encode the binary content to base64
+            encoded_content = base64.standard_b64encode(file_content_bytes).decode("utf-8")
+
+            # Add document with base64 encoded data and correct mime type
+            documents_for_api.append({
+                'mime_type': 'application/pdf', # Crucial for Gemini to recognize it
+                'data': encoded_content
             })
+            print(f"Document Processor: Successfully encoded {filename} ({len(file_content_bytes)} bytes).")
+
         except Exception as e:
-            print(f"Error processing document {fn}: {e}")
-            continue
-    
-    # Store documents in global variable for later access
-    _current_documents = documents
-    
-    if not documents:
-        print("Warning: No documents were successfully processed")
-    
-    return documents
+            print(f"Document Processor Error processing document {filename} for base64 encoding: {type(e).__name__} - {e}")
+            traceback.print_exc()
+            continue # Skip this document on error
+
+    if not documents_for_api:
+        print("Document Processor Warning: No documents were successfully processed and encoded.")
+
+    print(f"Document Processor: Finished processing. {len(documents_for_api)} documents ready for API.")
+    return documents_for_api

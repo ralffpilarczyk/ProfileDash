@@ -1,6 +1,6 @@
 """
 Section processor module for ProfileDash
-Handles processing of individual sections
+Handles processing of individual sections (Initial Generation Only for now)
 """
 
 import time
@@ -8,199 +8,119 @@ import re
 import traceback # Import traceback for detailed errors
 
 # Use relative imports for modules within the src package
-from .api_client import cached_generate_content, create_insight_model, create_fact_model # Added create_fact_model
+from .api_client import cached_generate_content, create_insight_model # Keep create_fact_model if refinement might be added later
 # Import from html_generator now using relative import
 from .html_generator import validate_html, repair_html, clean_llm_output
-# Import refinement functions here using relative import
-from .fact_refinement import get_fact_critique, fact_improvement_response
-from .insight_refinement import get_insight_critique, insight_improvement_response
-# --- REMOVED import for question_refinement ---
-from .utils import get_elapsed_time # Assuming get_elapsed_time is in src/utils.py
+# Refinement functions are imported but refine_section_content is removed/commented
+# from .fact_refinement import get_fact_critique, fact_improvement_response
+# from .insight_refinement import get_insight_critique, insight_improvement_response
+# Prompts
 from .prompts import persona, analysis_specs, output_format
-# from .section_definitions import sections # sections is passed in, no need to import here
+
+# Removed utils import
 
 # --- Function to Generate ONLY the Initial Section ---
 def generate_initial_section(section, documents, persona, analysis_specs, output_format, model):
-    """Generates, cleans, repairs, and returns the initial content for a single section."""
+    """
+    Generates, cleans, repairs, and returns the initial HTML content for a single section.
+    Accepts a pre-configured model instance.
+    """
     section_num = section["number"]
     section_title = section["title"]
     section_specs = section["specs"]
 
-    print(f"\n{get_elapsed_time()} Section {section_num}: GENERATING initial content for '{section_title}'")
+    print(f"Section Processor: Section {section_num}: GENERATING initial content for '{section_title}'")
 
-    # Construct the full prompt with document content
+    # Construct the full prompt including the document list (now base64 encoded PDFs)
+    # Gemini's generate_content can handle a list containing text and multimodal parts.
+    # We'll structure the prompt text first, then the documents.
     section_instruction = f"""
-    Please create section {section_num}: {section_title} for a company profile.
-    
-    SECTION SPECIFICATIONS:
-    {section_specs}
-    
-    ANALYSIS SPECIFICATIONS:
-    {analysis_specs}
-    
-    DOCUMENTS TO ANALYZE:
-    {documents}
-    
-    HTML REQUIREMENTS:
-    <div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><!-- content --></div>
-    RULES: Valid HTML, closed tags (<br/> self-closing), tables need thead/tbody.
-    """
+{persona}
+
+Please create section {section_num}: "{section_title}" for a company profile, focusing *only* on this section.
+
+SECTION SPECIFICATIONS:
+{section_specs}
+
+ANALYSIS SPECIFICATIONS (Apply to Section {section_num} content):
+{analysis_specs}
+
+OUTPUT FORMATTING INSTRUCTIONS (Apply to Section {section_num} content):
+{output_format}
+
+IMPORTANT: Generate *only* the HTML content for section {section_num}, starting with '<div class="section" id="section-{section_num}">' and ending with '</div>'. Base your analysis *strictly* on the provided documents.
+"""
+
+    # Prepare the input list for generate_content: instruction text + document parts
+    api_input = [section_instruction] + documents # Combine instruction string with list of document dicts
 
     try:
-        section_start_time_local = time.time()
-        print(f"{get_elapsed_time()} Section {section_num}: Preparing API call")
-        
+        print(f"Section Processor: Section {section_num}: Preparing API call")
+
         # Use the passed model instance
         if not model:
-            raise Exception("No model instance provided")
+            # This shouldn't happen if app.py checks, but defensive coding
+            raise ValueError("No valid model instance provided to generate_initial_section")
 
-        # Generate content with proper error handling
-        try:
-            response = cached_generate_content(
-                model=model,
-                prompt=section_instruction,
-                section_num=section_num,
-                cache_enabled=True,
-                max_retries=3,
-                timeout=180
-            )
-        except Exception as e:
-            print(f"Error generating content for section {section_num}: {e}")
-            raise
+        print(f"Section Processor: Section {section_num}: Calling API (cached_generate_content)")
+        # Pass the combined input list and the model instance
+        # Timeout increased slightly as multi-modal processing can take longer
+        section_response = cached_generate_content(model, api_input, section_num=section_num, cache_enabled=True, timeout=300)
 
-        if not response or not response.text:
-            raise Exception(f"Empty response from API for section {section_num}")
+        # Defensive check for response and text attribute
+        if section_response is None or not hasattr(section_response, 'text'):
+             # Attempt to get feedback if available
+             feedback = getattr(section_response, 'prompt_feedback', 'No feedback available.')
+             raise ValueError(f"API response object is invalid or missing 'text' attribute. Feedback: {feedback}")
 
-        # Clean the response
-        content = clean_llm_output(response.text)
-        if not content:
-            raise Exception(f"Empty content after cleaning for section {section_num}")
+        initial_content_raw = section_response.text
+        print(f"Section Processor: Section {section_num}: API call complete (received {len(initial_content_raw)} chars)")
 
-        # FIXED: Don't assign the result of validate_html to content
-        # Just check if the HTML is valid
-        if not validate_html(content):
-            raise Exception(f"Invalid HTML for section {section_num}")
+        if not initial_content_raw or not initial_content_raw.strip():
+             print(f"Section Processor: Section {section_num}: Warning - API returned empty content.")
+             # Create standard error HTML
+             initial_content_repaired = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">Error: API returned empty content for this section.</p></div>'
+        else:
+            # Proceed with cleaning and repair
+            print(f"Section Processor: Section {section_num}: Cleaning LLM output")
+            initial_content_cleaned = clean_llm_output(initial_content_raw, section_num, section_title)
 
-        # Now repair the HTML (content is still the HTML string)
-        content = repair_html(content, section_num, section_title)
-        if not content:
-            raise Exception(f"Failed to repair HTML for section {section_num}")
+            print(f"Section Processor: Section {section_num}: Repairing HTML")
+            initial_content_repaired = repair_html(initial_content_cleaned, section_num, section_title)
 
-        # Create the final section HTML
-        final_content = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2>{content}</div>'
-        
-        print(f"{get_elapsed_time()} Section {section_num}: Successfully generated content")
-        return section_num, final_content
+            # Final validation check after repair
+            if not validate_html(initial_content_repaired):
+                 print(f"Section Processor: Section {section_num}: Warning - Invalid HTML structure detected even after repair.")
+                 # Fallback if repair still results in invalid or empty HTML
+                 if not initial_content_repaired or not initial_content_repaired.strip():
+                      initial_content_repaired = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">Error: Failed to generate or repair valid HTML content.</p></div>'
+                 # Optionally, keep the invalid HTML but wrap it in an error message? Less ideal.
+
+        print(f"Section Processor: Section {section_num}: Content generated and processed.")
+        # Return the section number and the final HTML string (could be error HTML)
+        return section_num, initial_content_repaired
+
+    except TimeoutError as e:
+        error_msg = f"TIMEOUT generating Section {section_num}: {str(e)}"
+        print(f"Section Processor: {error_msg}")
+        error_content = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">ERROR: Processing timed out for section {section_num}.</p></div>'
+        # Return the error content so app.py knows it failed but has a placeholder
+        return section_num, error_content # Return error HTML, don't raise
 
     except Exception as e:
-        error_msg = f"Error in section {section_num}: {str(e)}"
-        print(f"{get_elapsed_time()} {error_msg}")
-        traceback.print_exc()
-        error_content = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">ERROR: {error_msg}</p></div>'
+        error_msg = f"ERROR generating initial content for section {section_num}: {type(e).__name__} - {str(e)}"
+        print(f"Section Processor: {error_msg}")
+        traceback.print_exc() # Print full traceback to console for debugging
+        error_content = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">ERROR: Could not generate initial content for section {section_num}: {str(e)}</p></div>'
+        # Instead of re-raising, return the error content. App.py will check for <p class="error">.
         return section_num, error_content
 
 
-# --- Function to Refine a Single Section ---
-# (Imports are handled at module level now with relative paths)
-def refine_section_content(section, initial_content, documents, persona, analysis_specs, output_format, profile_folder):
-    """Performs Fact and Insight refinement sequence on initial content."""
-    section_num = section["number"]
-    section_title = section["title"]
-    section_specs = section["specs"]
-
-    # get_elapsed_time is imported from .utils at the top
-
-    print(f"{get_elapsed_time()} Section {section_num}: Starting refinement for '{section_title}'")
-
-    # Prepare context instruction (might be slightly different for refinement)
-    section_instruction_context = f"""
-    Context: Refining section {section_num}: {section_title}. Original Spec: {section_specs}
-    Analysis Specs: <analysis_specs>{analysis_specs}</analysis_specs>
-    """
-    # Output format reminder is handled within the refinement functions' prompts
-
-    current_content = initial_content
-    content_after_fact = initial_content # Start assuming failure
-
-    # --- Fact Refinement ---
-    print(f"\n{get_elapsed_time()} Section {section_num}: --- Fact Refinement ---")
-    try:
-        print(f"{get_elapsed_time()} Section {section_num}: Performing fact critique")
-        # Pass context, not full prompt format specifiers
-        _, fact_critique_text = get_fact_critique(section_instruction_context, current_content)
-
-        if "Error: Could not generate" in fact_critique_text or not fact_critique_text.strip():
-             print(f"{get_elapsed_time()} Section {section_num}: Skipping fact improvement due to critique error or empty critique.")
-             content_after_fact = current_content
-        else:
-            try:
-                print(f"{get_elapsed_time()} Section {section_num}: Applying fact improvements")
-                # Call fact_improvement_response which uses relative imports internally
-                _, fact_improved_content = fact_improvement_response(
-                    section_instruction_context, current_content, fact_critique_text, section_num, section_title
-                )
-                content_after_fact = fact_improved_content
-                print(f"{get_elapsed_time()} Section {section_num}: Fact improvement successful.")
-            except Exception as fact_improve_e:
-                 print(f"{get_elapsed_time()} Section {section_num}: Fact improvement API call FAILED: {fact_improve_e}. Using content from before this step.")
-                 traceback.print_exc()
-                 content_after_fact = current_content # Revert to content before fact improvement attempt
-
-    except Exception as fact_critique_e:
-        print(f"{get_elapsed_time()} Section {section_num}: Fact critique generation FAILED: {fact_critique_e}. Skipping fact refinement.")
-        traceback.print_exc()
-        content_after_fact = current_content # Keep original if critique failed
-
-    # Update current content for the next stage
-    current_content = content_after_fact
-
-    # --- Insight Refinement ---
-    print(f"\n{get_elapsed_time()} Section {section_num}: --- Insight Refinement ---")
-    try:
-        print(f"{get_elapsed_time()} Section {section_num}: Performing insight critique")
-        # Pass context, not full prompt format specifiers
-        _, insight_critique_text = get_insight_critique(section_instruction_context, current_content)
-
-        if "Error: Could not generate" in insight_critique_text or not insight_critique_text.strip():
-            print(f"{get_elapsed_time()} Section {section_num}: Skipping insight improvement due to critique error or empty critique.")
-            # Keep current_content (which holds result after fact refinement)
-        else:
-            try:
-                print(f"{get_elapsed_time()} Section {section_num}: Applying insight improvements")
-                # Call insight_improvement_response which uses relative imports internally
-                _, insight_improved_content = insight_improvement_response(
-                    section_instruction_context, current_content, insight_critique_text, section_num, section_title
-                )
-                current_content = insight_improved_content # Update current content if successful
-                print(f"{get_elapsed_time()} Section {section_num}: Insight improvement successful.")
-            except Exception as insight_improve_e:
-                print(f"{get_elapsed_time()} Section {section_num}: Insight improvement API call FAILED: {insight_improve_e}. Using content from before this step.")
-                traceback.print_exc()
-                # current_content remains unchanged (holds result after fact refinement)
-
-    except Exception as insight_critique_e:
-        print(f"{get_elapsed_time()} Section {section_num}: Insight critique generation FAILED: {insight_critique_e}. Skipping insight refinement.")
-        traceback.print_exc()
-        # current_content remains unchanged (holds result after fact refinement)
-
-    # --- Final Output ---
-    final_refined_content = current_content # This holds the result after all successful/attempted refinements
-    print(f"\n{get_elapsed_time()} Section {section_num}: --- Finalizing Refined Content ---")
-
-    # Final clean and repair just in case refinement steps introduced issues
-    final_refined_content = clean_llm_output(final_refined_content, section_num, section_title)
-    
-    # FIXED: Don't assign the result of validate_html to content
-    # Just check for validation
-    if not validate_html(final_refined_content):
-        print(f"{get_elapsed_time()} Section {section_num}: Warning - refined content failed validation, attempting repair")
-    
-    final_refined_content = repair_html(final_refined_content, section_num, section_title)
-
-    # --- AVOID SAVING INTERMEDIATE FILES IN GRADIO CONTEXT ---
-    # save_section(profile_folder, f"{section_num}_refined", final_refined_content)
-    # print(f"{get_elapsed_time()} Section {section_num}: Saved refined section {section_num}")
-    print(f"{get_elapsed_time()} Section {section_num}: Refined content generated (saving skipped).")
-    # --- END OF CHANGE ---
-
-    return final_refined_content
+# --- Refinement Function (Kept structurally but not called by app.py) ---
+# def refine_section_content(section, initial_content, documents, persona, analysis_specs, output_format):
+#    """Performs Fact and Insight refinement sequence on initial content."""
+#    # ... (Keep internal logic but ensure it doesn't rely on removed globals/timers)
+#    # ... (This function would need 'documents' passed if activated)
+#    print(f"Section Processor: refine_section_content called for section {section['number']} (Currently Inactive in Gradio App)")
+#    # Return initial content for now if called accidentally
+#    return initial_content
