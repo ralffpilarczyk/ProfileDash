@@ -49,22 +49,33 @@ def get_current_documents():
 def load_document_content(uploaded):
     """
     Process uploaded documents and convert to format needed for API
-    Returns a list of document dictionaries
+    Returns a list of document dictionaries with extracted text
     """
     global _current_documents
     documents = []
     
     for fn in uploaded.keys():
         file_content = uploaded[fn]
-        encoded_content = base64.standard_b64encode(file_content).decode("utf-8")
-
-        # Add each document as a dictionary to the documents list
-        documents.append({
-            'mime_type': 'application/pdf',
-            'data': encoded_content
-        })
+        try:
+            # Extract text from PDF
+            text_content = extract_text_from_html(file_content)
+            if not text_content:
+                print(f"Warning: No text content extracted from {fn}")
+                continue
+                
+            # Add document with extracted text
+            documents.append({
+                'mime_type': 'text/plain',
+                'data': text_content
+            })
+        except Exception as e:
+            print(f"Error processing document {fn}: {e}")
+            continue
     
     # Store documents in global variable for later access
     _current_documents = documents
+    
+    if not documents:
+        print("Warning: No documents were successfully processed")
     
     return documents

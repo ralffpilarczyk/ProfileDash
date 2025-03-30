@@ -17,6 +17,7 @@ import google.api_core.exceptions # Import the specific exceptions module
 # Simple cache for API responses
 api_cache = {}
 cache_file = "api_cache.json"
+CACHE_ENABLED_GLOBAL = True  # Global switch to enable/disable caching
 
 # Load cache if it exists
 if os.path.exists(cache_file):
@@ -36,6 +37,11 @@ def get_cache_key(model_name, prompt):
 # --- CORRECTED: REMOVED start_time_ref argument ---
 def cached_generate_content(model, prompt, section_num=None, cache_enabled=True, max_retries=5, timeout=120):
     """Generate content with caching and exponential backoff for rate limits"""
+    # Check global cache setting - if globally disabled, override local setting
+    global CACHE_ENABLED_GLOBAL
+    if not CACHE_ENABLED_GLOBAL:
+        cache_enabled = False
+
     # Use the imported get_elapsed_time from main module (relies on global start time)
     try:
         from .utils import get_elapsed_time
@@ -222,7 +228,19 @@ def create_fact_model():
     return create_model_config(temperature=0.2, top_p=0.8, top_k=40)
 
 def create_insight_model():
-    """Create a slightly more creative model for generation/insight"""
-    return create_model_config(temperature=0.5, top_p=0.9, top_k=50)
+    """Creates and configures the insight model with appropriate settings."""
+    try:
+        # Create and return the configured model directly
+        return create_model_config(temperature=0.7, top_p=0.9, top_k=40)
+    except Exception as e:
+        print(f"Error creating insight model: {e}")
+        traceback.print_exc()
+        raise
 
-# --- rate_answer function definition is removed ---
+# Function to set global cache state
+def set_global_cache_state(enabled=True):
+    """Enable or disable caching globally"""
+    global CACHE_ENABLED_GLOBAL
+    CACHE_ENABLED_GLOBAL = enabled
+    print(f"Global API cache state set to: {'ENABLED' if enabled else 'DISABLED'}")
+    return CACHE_ENABLED_GLOBAL
