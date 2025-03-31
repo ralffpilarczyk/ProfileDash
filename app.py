@@ -434,20 +434,22 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         gr.Markdown(f"""
         # **ProfileDash**
         {APP_VERSION}
+
         By Ralf Pilarczyk
 
-        Generates company profiles by analyzing uploaded PDFs using AI.
+        Generates company profiles by analyzing uploaded PDFs using Google Gemini.
+        
+        Disclaimer: Use is at your own risk. Outputs may contain inaccuracies.
 
-        **Authentication Required:** Use company email & Google AI API Key.
+        **2-Step Authentication:** Enter your company email, then Google AI API Key.
 
-        *Disclaimer: Use is at your own risk. Outputs may contain inaccuracies.*
         """)
 
     # --- 2. Authentication ---
     with gr.Column(visible=True) as auth_section:
-        auth_status = gr.Textbox(label="Authentication Status", value="Enter email", interactive=False)
+        auth_status = gr.Textbox(label="Authentication Status", value="Enter your email address below, then press Send Code", interactive=False)
         with gr.Row(visible=True) as email_input_row:
-            email_input = gr.Textbox(label=f"Email (@{ALLOWED_DOMAIN})", placeholder=f"your.email@{ALLOWED_DOMAIN}")
+            email_input = gr.Textbox(label="Enter Your Email", placeholder=f"your.email@{ALLOWED_DOMAIN}")
             send_code_button = gr.Button("Send Code")
         with gr.Row(visible=False) as code_input_row:
             code_input = gr.Textbox(label="Enter 4-Digit Code")
