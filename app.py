@@ -75,44 +75,21 @@ def generate_auth_code():
     """Generates a 4-digit authentication code."""
     return str(random.randint(1000, 9999))
 
-def log_user_activity(email):
-    """Appends user email and timestamp to a JSON log file."""
-    log_entry = {
-        "timestamp": datetime.now().isoformat(),
-        "email": email
-    }
-    try:
-        if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 0:
-            with open(LOG_FILE, "r") as f:
-                try:
-                    logs = json.load(f)
-                    if not isinstance(logs, list): logs = []
-                except json.JSONDecodeError:
-                    logs = []
-        else:
-            logs = []
-
-        logs.append(log_entry)
-        with open(LOG_FILE, "w") as f:
-            json.dump(logs, f, indent=2)
-        print(f"Logged activity for: {email}")
-
-    except Exception as e:
-        print(f"Error writing to log file {LOG_FILE}: {e}")
-        traceback.print_exc()
-
 # --- Authentication Backend ---
 
 def send_auth_code(email, auth_state):
-    """Validates email, sends auth code via SendGrid, updates state."""
+    """Validates email, sends auth code via SendGrid, updates state, and sends JSON log email."""
     if not email or '@' not in email:
+        # Existing text output:
         return "Please enter a valid email address.", auth_state, gr.update(visible=True), gr.update(visible=False)
 
     try:
         domain = email.split('@')[1]
         if domain.lower() != ALLOWED_DOMAIN.lower():
+            # Existing text output:
             return f"Access denied. Only users from the '{ALLOWED_DOMAIN}' domain are permitted.", auth_state, gr.update(visible=True), gr.update(visible=False)
     except IndexError:
+         # Existing text output:
          return "Invalid email format.", auth_state, gr.update(visible=True), gr.update(visible=False)
 
     if not SENDGRID_API_KEY or not sg:
@@ -121,14 +98,19 @@ def send_auth_code(email, auth_state):
         auth_state["email"] = email
         auth_state["code"] = code
         auth_state["code_sent"] = True # Mark as sent for testing flow
+        # Existing text output:
         return "SendGrid not configured. For testing, use code 1234.", auth_state, gr.update(visible=False), gr.update(visible=True)
 
-    # Generate and Send Code
+    # --- Define your tracking email address ---
+    TRACKING_EMAIL = "ProfileDash.NoReply@gmail.com" 
+
+    # Generate User Code
     code = generate_auth_code()
     auth_state["email"] = email
     auth_state["code"] = code
     auth_state["code_sent"] = False # Mark as not sent yet
 
+    # Prepare User Email
     subject = "Your ProfileDash Authentication Code"
     html_content = f"""
     <div style="font-family: sans-serif; padding: 20px; max-width: 400px; margin: auto; border: 1px solid #ddd; border-radius: 5px;">
@@ -142,27 +124,78 @@ def send_auth_code(email, auth_state):
         <p style="font-size: 10px; color: #aaa; text-align: center;">ProfileDash - Automated Company Profiling</p>
     </div>
     """
-    message = Mail(
+    user_message = Mail(
         from_email=Email(SENDER_EMAIL, "ProfileDash"),
         to_emails=To(email),
         subject=subject,
         html_content=Content("text/html", html_content)
     )
 
+    # --- Try sending the email to the USER first ---
     try:
-        response = sg.client.mail.send.post(request_body=message.get())
+        response = sg.client.mail.send.post(request_body=user_message.get())
         if 200 <= response.status_code < 300:
             print(f"Auth code sent successfully to {email}. Status: {response.status_code}")
             auth_state["code_sent"] = True
-            log_user_activity(email) # Log successful attempt
-            return f"Authentication code sent to {email}. Check inbox/spam and enter below.", auth_state, gr.update(visible=False), gr.update(visible=True)
+            # User email sent successfully, proceed to log email attempt
         else:
+            # Failed to send to user, report error and stop
             print(f"Failed to send auth code to {email}. Status: {response.status_code}, Body: {response.body}")
+            # Existing text output:
             return f"Error sending authentication code (Status: {response.status_code}). Try again later or contact support.", auth_state, gr.update(visible=True), gr.update(visible=False)
+
     except Exception as e:
+        # Exception sending to user, report error and stop
         print(f"Exception sending email to {email}: {e}")
         traceback.print_exc()
+        # Existing text output:
         return f"An error occurred while sending the email: {e}. Please try again.", auth_state, gr.update(visible=True), gr.update(visible=False)
+
+    # --- If user email was sent, attempt to send the structured log email ---
+    if auth_state["code_sent"] and TRACKING_EMAIL:
+        try:
+            timestamp = datetime.now().isoformat()
+            log_subject = f"ProfileDash Usage: {email} - {timestamp}" # Informative subject
+
+            # Create log data dictionary
+            log_data = {
+                "timestamp": timestamp,
+                "userEmail": email,
+                "event": "AuthCodeSent",
+                "appVersion": APP_VERSION, # Assumes APP_VERSION is defined globally
+                "status": "Success"
+                # Add other relevant info here if needed in the future
+            }
+
+            # Convert to JSON string
+            log_body_json = json.dumps(log_data, indent=2)
+
+            # Create log email message
+            log_message = Mail(
+                from_email=Email(SENDER_EMAIL, "ProfileDash Logs"), # Specific sender name for logs
+                to_emails=To(TRACKING_EMAIL),
+                subject=log_subject,
+                plain_text_content=Content("text/plain", log_body_json) # Send JSON in plain text body
+            )
+
+            # Send the log email
+            log_response = sg.client.mail.send.post(request_body=log_message.get())
+
+            if 200 <= log_response.status_code < 300:
+                print(f"Successfully sent JSON tracking log email to {TRACKING_EMAIL}.")
+            else:
+                 # Log failure but don't block user
+                 print(f"Warning: Failed to send JSON tracking log email. Status: {log_response.status_code}, Body: {log_response.body}")
+
+        except Exception as log_e:
+            # Log exception but don't block user
+            print(f"Warning: Exception sending JSON tracking log email: {log_e}")
+            traceback.print_exc()
+
+    # --- Return success confirmation to the user (using your existing text) ---
+    # NOTE: Removed the old log_user_activity call comment
+    return f"Authentication code sent to {email}. Enter code below and press Verify Code.", auth_state, gr.update(visible=False), gr.update(visible=True)
+
 
 def verify_auth_code(entered_code, auth_state):
     """Verifies the entered code against the stored code."""
@@ -468,6 +501,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         gr.Markdown(f"Version {APP_VERSION}")
         gr.Markdown("Upload PDF documents. Generation takes ~10 mins. Keep device awake and this tab active.")
         gr.Markdown(f"Max upload size: {MAX_UPLOAD_MB} MB. Desktop: Ctrl/Cmd+Click for multiple files.")
+        gr.Markdown("Once profile is generated, download the file from your browser download folder.")
 
         with gr.Row():
             pdf_upload = gr.File(
