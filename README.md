@@ -1,5 +1,12 @@
-Okay, here is an updated `README.md` reflecting the current state of the ProfileDash application (Gradio UI, email auth, user API key, base64 processing, auto-download).
-
+---
+title: ProfileDash
+emoji: 🚀
+colorFrom: blue
+colorTo: green
+sdk: gradio
+sdk_version: "4.31.5" # Or another recent Gradio 4.x version
+app_file: app.py
+pinned: false
 ---
 
 # ProfileDash
