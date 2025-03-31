@@ -4,7 +4,7 @@ emoji: 🚀
 colorFrom: blue
 colorTo: green
 sdk: gradio
-sdk_version: "4.31.5" # Or another recent Gradio 4.x version
+sdk_version: "5.23.1" # Or another recent Gradio 4.x version
 app_file: app.py
 pinned: false
 ---
