@@ -200,9 +200,9 @@ def cached_generate_content(model, prompt_or_input_list, section_num=None, cache
 
 def create_model_config(temperature=0.5, top_p=0.9, top_k=50): # Adjusted defaults based on 'Old version'
     """Creates a GenerativeModel instance with specific configuration."""
-    # Using gemini-1.5-flash as a good balance of capability and speed/cost
+    # Using gemini-2.0-flash as a good balance of capability and speed/cost
     # Adjust model_name if you specifically need Pro or another variant
-    model_name = "gemini-1.5-flash"
+    model_name = "gemini-2.0-flash"
     print(f"API Client: Creating model: {model_name} with temp={temperature}, top_p={top_p}, top_k={top_k}")
     try:
         # Define safety settings - BLOCK_MEDIUM_AND_ABOVE is a reasonable default
