@@ -273,7 +273,7 @@ def run_initial_generation(file_paths, auth_state, progress=gr.Progress(track_tq
     try:
         print(f"Configuring genai with user key: ...{api_key[-4:]}")
         genai.configure(api_key=api_key)
-        test_model = genai.GenerativeModel("gemini-1.5-flash")
+        test_model = genai.GenerativeModel("gemini-2.0-flash")
         _ = test_model.generate_content("test: say ok")
         print("genai configured and test call successful.")
         status = append_status("Google AI SDK Configured OK.")
