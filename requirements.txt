@@ -4,7 +4,7 @@ python-dotenv>=1.0.0
 sendgrid>=6.9.0
 cachetools>=5.0.0
 requests>=2.25.0
-
+huggingface_hub>=0.20
 
 # gradio
 # annotated-types==0.7.0

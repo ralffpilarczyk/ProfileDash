@@ -7,11 +7,39 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tempfile
 from datetime import datetime # Add import for logging
+from huggingface_hub import upload_file, HfApi 
+import io 
+
 
 # --- App Version ---
 # Updated version to reflect auto-download change
-APP_VERSION = "v1.0.2"
+APP_VERSION = "v1.0.3"
 LOG_FILE = "user_log.json"
+
+# --- START: Add Hugging Face Dataset Configuration ---
+# IMPORTANT: Replace 'your-username' with your ACTUAL Hugging Face username!
+# Use the EXACT dataset name, including spaces: "ProfileDash Data"
+DATASET_REPO_ID = "ralfpilarczyk/ProfileDashData" 
+
+# Load the secret token from the Space environment variables (Secrets)
+HF_TOKEN = os.environ.get("HF_DATA_TOKEN") 
+
+# Initialize the Hub API client 
+try:
+    if HF_TOKEN:
+        api = HfApi(token=HF_TOKEN)
+        print("Hugging Face API client initialized with token.")
+    else:
+        api = HfApi() 
+        print("WARNING: HF_DATA_TOKEN secret not found. Uploads to private dataset will fail.")
+except Exception as api_init_e:
+    print(f"ERROR initializing HfApi: {api_init_e}")
+    api = None # Ensure api is None if init fails
+
+# Basic check for username placeholder and correct dataset name format
+if "your-username" in DATASET_REPO_ID or "/" not in DATASET_REPO_ID:
+     print(f"CRITICAL WARNING: Check DATASET_REPO_ID variable! Currently: '{DATASET_REPO_ID}'. Ensure username is replaced and format is 'username/Dataset Name'.")
+# --- END: Add HF Dataset Configuration ---
 
 # --- Import necessary functions from your modules within the 'src' directory ---
 try:
@@ -75,6 +103,53 @@ def generate_auth_code():
     """Generates a 4-digit authentication code."""
     return str(random.randint(1000, 9999))
 
+# ---  START: New Logging Function ---
+def save_log_entry_hf_dataset(user_email: str, event_data: dict):
+    """Uploads a structured log entry as a JSON file to the private HF Dataset."""
+    # Check configuration before proceeding
+    if not HF_TOKEN or not api or "your-username" in DATASET_REPO_ID:
+        print("Log saving skipped: HF Token or Repo ID not configured correctly.")
+        return 
+
+    timestamp = datetime.now().isoformat()
+    log_payload = {"timestamp": timestamp, "user": user_email, **event_data}
+    
+    # Use try-except for JSON dumping, although it's less likely to fail here
+    try:
+        log_content = json.dumps(log_payload, indent=2) 
+    except TypeError as json_type_err:
+         print(f"ERROR creating log JSON: {json_type_err}. Data: {log_payload}")
+         # Fallback: create a simple error log entry
+         log_payload = {"timestamp": timestamp, "user": user_email, "event": "LoggingError", "error": f"JSON TypeError: {json_type_err}"}
+         log_content = json.dumps(log_payload, indent=2)
+         
+    # Create a unique filename using timestamp and sanitized email
+    sanitized_email = user_email.replace('@', '_at_').replace('.', '_') 
+    log_filename_in_repo = f"logs/{sanitized_email}/{timestamp}.json" 
+    
+    try:
+        # Convert the JSON string to bytes and wrap it in BytesIO
+        log_bytes = io.BytesIO(log_content.encode('utf-8'))
+        
+        print(f"Attempting to upload log to: {DATASET_REPO_ID}/{log_filename_in_repo}")
+        
+        # Upload the data
+        upload_file(
+            path_or_fileobj=log_bytes,
+            path_in_repo=log_filename_in_repo,
+            repo_id=DATASET_REPO_ID,
+            repo_type="dataset", 
+            token=HF_TOKEN, 
+            commit_message=f"Add log: {event_data.get('event', 'Unknown Event')} for {user_email}" 
+        )
+        print(f"Successfully uploaded log: {log_filename_in_repo}")
+        
+    except Exception as e:
+        # Log errors but don't crash the main application
+        print(f"ERROR uploading log to HF Dataset '{DATASET_REPO_ID}': {e}")
+        # traceback.print_exc() # Uncomment only if needed for deep debugging
+# --- END: New Logging Function ---
+
 # --- Authentication Backend ---
 
 def send_auth_code(email, auth_state):
@@ -101,8 +176,8 @@ def send_auth_code(email, auth_state):
         # Existing text output:
         return "SendGrid not configured. For testing, use code 1234.", auth_state, gr.update(visible=False), gr.update(visible=True)
 
-    # --- Define your tracking email address ---
-    TRACKING_EMAIL = "ProfileDash.NoReply@gmail.com" 
+    # # --- Define your tracking email address ---
+    # TRACKING_EMAIL = "ProfileDash.NoReply@gmail.com" 
 
     # Generate User Code
     code = generate_auth_code()
@@ -137,60 +212,122 @@ def send_auth_code(email, auth_state):
         if 200 <= response.status_code < 300:
             print(f"Auth code sent successfully to {email}. Status: {response.status_code}")
             auth_state["code_sent"] = True
-            # User email sent successfully, proceed to log email attempt
+
+            # --- START: Inserted Code for Success Logging ---
+            try:
+                log_event = {
+                    "event": "AuthCodeSent",
+                    "status": "Success",
+                    "appVersion": APP_VERSION 
+                }
+                save_log_entry_hf_dataset(user_email=email, event_data=log_event)
+            except Exception as dataset_log_e:
+                print(f"Non-critical error logging AuthCodeSent success to dataset: {dataset_log_e}")
+            # --- END: Inserted Code for Success Logging ---
+
+            # User email sent successfully, proceed to log email attempt (existing code for tracking email)
+            # ... (The existing 'if auth_state["code_sent"] and TRACKING_EMAIL:' block follows here) ...
         else:
             # Failed to send to user, report error and stop
             print(f"Failed to send auth code to {email}. Status: {response.status_code}, Body: {response.body}")
+
+            # --- START: Inserted Code for Failure Logging ---
+            try:
+                log_event = {
+                    "event": "AuthCodeSendFailed",
+                    "status": "Failure",
+                    "statusCode": response.status_code,
+                    "responseBody": str(response.body)[:500], # Limit response body size
+                    "appVersion": APP_VERSION
+                }
+                save_log_entry_hf_dataset(user_email=email, event_data=log_event)
+            except Exception as dataset_log_e:
+                print(f"Non-critical error logging AuthCodeSendFailed to dataset: {dataset_log_e}")
+            # --- END: Inserted Code for Failure Logging ---
+
             # Existing text output:
             return f"Error sending authentication code (Status: {response.status_code}). Try again later or contact support.", auth_state, gr.update(visible=True), gr.update(visible=False)
+
+        # response = sg.client.mail.send.post(request_body=user_message.get())
+        # if 200 <= response.status_code < 300:
+        #     print(f"Auth code sent successfully to {email}. Status: {response.status_code}")
+        #     auth_state["code_sent"] = True
+        #     # User email sent successfully, proceed to log email attempt
+        # else:
+            # Failed to send to user, report error and stop
+            # print(f"Failed to send auth code to {email}. Status: {response.status_code}, Body: {response.body}")
+            # # Existing text output:
+            # return f"Error sending authentication code (Status: {response.status_code}). Try again later or contact support.", auth_state, gr.update(visible=True), gr.update(visible=False)
+
+    # except Exception as e:
+    #     # Exception sending to user, report error and stop
+    #     print(f"Exception sending email to {email}: {e}")
+    #     traceback.print_exc()
+    #     # Existing text output:
+    #     return f"An error occurred while sending the email: {e}. Please try again.", auth_state, gr.update(visible=True), gr.update(visible=False)
 
     except Exception as e:
         # Exception sending to user, report error and stop
         print(f"Exception sending email to {email}: {e}")
         traceback.print_exc()
+
+        # --- START: Inserted Code for Exception Logging ---
+        try:
+            log_event = {
+                "event": "AuthCodeSendException",
+                "status": "Exception",
+                "errorType": type(e).__name__,
+                "errorMessage": str(e),
+                "appVersion": APP_VERSION
+            }
+            save_log_entry_hf_dataset(user_email=email, event_data=log_event)
+        except Exception as dataset_log_e:
+            print(f"Non-critical error logging AuthCodeSendException to dataset: {dataset_log_e}")
+        # --- END: Inserted Code for Exception Logging ---
+
         # Existing text output:
         return f"An error occurred while sending the email: {e}. Please try again.", auth_state, gr.update(visible=True), gr.update(visible=False)
 
-    # --- If user email was sent, attempt to send the structured log email ---
-    if auth_state["code_sent"] and TRACKING_EMAIL:
-        try:
-            timestamp = datetime.now().isoformat()
-            log_subject = f"ProfileDash Usage: {email} - {timestamp}" # Informative subject
+    # # --- If user email was sent, attempt to send the structured log email ---
+    # if auth_state["code_sent"] and TRACKING_EMAIL:
+    #     try:
+    #         timestamp = datetime.now().isoformat()
+    #         log_subject = f"ProfileDash Usage: {email} - {timestamp}" # Informative subject
 
-            # Create log data dictionary
-            log_data = {
-                "timestamp": timestamp,
-                "userEmail": email,
-                "event": "AuthCodeSent",
-                "appVersion": APP_VERSION, # Assumes APP_VERSION is defined globally
-                "status": "Success"
-                # Add other relevant info here if needed in the future
-            }
+    #         # Create log data dictionary
+    #         log_data = {
+    #             "timestamp": timestamp,
+    #             "userEmail": email,
+    #             "event": "AuthCodeSent",
+    #             "appVersion": APP_VERSION, # Assumes APP_VERSION is defined globally
+    #             "status": "Success"
+    #             # Add other relevant info here if needed in the future
+    #         }
 
-            # Convert to JSON string
-            log_body_json = json.dumps(log_data, indent=2)
+    #         # Convert to JSON string
+    #         log_body_json = json.dumps(log_data, indent=2)
 
-            # Create log email message
-            log_message = Mail(
-                from_email=Email(SENDER_EMAIL, "ProfileDash Logs"), # Specific sender name for logs
-                to_emails=To(TRACKING_EMAIL),
-                subject=log_subject,
-                plain_text_content=Content("text/plain", log_body_json) # Send JSON in plain text body
-            )
+    #         # Create log email message
+    #         log_message = Mail(
+    #             from_email=Email(SENDER_EMAIL, "ProfileDash Logs"), # Specific sender name for logs
+    #             to_emails=To(TRACKING_EMAIL),
+    #             subject=log_subject,
+    #             plain_text_content=Content("text/plain", log_body_json) # Send JSON in plain text body
+    #         )
 
-            # Send the log email
-            log_response = sg.client.mail.send.post(request_body=log_message.get())
+    #         # Send the log email
+    #         log_response = sg.client.mail.send.post(request_body=log_message.get())
 
-            if 200 <= log_response.status_code < 300:
-                print(f"Successfully sent JSON tracking log email to {TRACKING_EMAIL}.")
-            else:
-                 # Log failure but don't block user
-                 print(f"Warning: Failed to send JSON tracking log email. Status: {log_response.status_code}, Body: {log_response.body}")
+    #         if 200 <= log_response.status_code < 300:
+    #             print(f"Successfully sent JSON tracking log email to {TRACKING_EMAIL}.")
+    #         else:
+    #              # Log failure but don't block user
+    #              print(f"Warning: Failed to send JSON tracking log email. Status: {log_response.status_code}, Body: {log_response.body}")
 
-        except Exception as log_e:
-            # Log exception but don't block user
-            print(f"Warning: Exception sending JSON tracking log email: {log_e}")
-            traceback.print_exc()
+    #     except Exception as log_e:
+    #         # Log exception but don't block user
+    #         print(f"Warning: Exception sending JSON tracking log email: {log_e}")
+    #         traceback.print_exc()
 
     # --- Return success confirmation to the user (using your existing text) ---
     # NOTE: Removed the old log_user_activity call comment
