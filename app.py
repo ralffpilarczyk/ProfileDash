@@ -14,7 +14,7 @@ import uuid
 
 # --- App Version ---
 # Updated version to reflect auto-download change
-APP_VERSION = "v1.0.3"
+APP_VERSION = "v1.0.4"
 LOG_FILE = "user_log.json"
 
 # --- START: Add Hugging Face Dataset Configuration ---
