@@ -1,6 +1,7 @@
 # Updated file
 # Environment variables
 .env
+.cursorignore
 
 # Python cache files
 __pycache__/

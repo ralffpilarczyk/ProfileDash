@@ -15,7 +15,7 @@ ProfileDash automatically generates comprehensive company profiles by analyzing 
 
 ## Key Features
 
-*   **AI-Powered Analysis:** Leverages Google's Gemini models to analyze content from PDF documents.
+*   **LLM-Powered Analysis:** Leverages Google's Gemini models to analyze content from PDF documents.
 *   **Gradio Web Interface:** Simple UI for uploading files and monitoring progress.
 *   **Multi-PDF Upload:** Supports uploading multiple PDF documents for analysis.
 *   **Email Authentication:** Requires authentication using a company email address (domain restricted) via a code sent using SendGrid.
