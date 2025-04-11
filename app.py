@@ -9,6 +9,7 @@ import tempfile
 from datetime import datetime # Add import for logging
 from huggingface_hub import upload_file, HfApi 
 import io 
+import uuid 
 
 
 # --- App Version ---
@@ -150,6 +151,84 @@ def save_log_entry_hf_dataset(user_email: str, event_data: dict):
         # traceback.print_exc() # Uncomment only if needed for deep debugging
 # --- END: New Logging Function ---
 
+def save_section_hf_dataset(section_num: int, section_content: str, content_type: str, run_id: str, company_name: str, user_email: str):
+    """Uploads an individual generated section's content to the private HF Dataset."""
+    if not HF_TOKEN or not api or "your-username" in DATASET_REPO_ID:
+        print(f"Section {section_num} saving skipped: HF Token/Repo ID not configured.")
+        return False # Indicate failure
+
+    # Sanitize names for use in file paths
+    safe_company_name = "".join(c for c in company_name if c.isalnum() or c in (' ', '_')).rstrip().replace(' ', '_')
+    sanitized_email = user_email.replace('@', '_at_').replace('.', '_')
+    
+    file_extension = "html" if content_type == "html" else "json" # Prepare for future
+    
+    # Define path within the dataset repo using the run_id
+    # Example: profiles/user_at_domain_com/RUN_ID_UUID/section_1.html
+    section_filename_in_repo = f"profiles/{sanitized_email}/{run_id}/section_{section_num}.{file_extension}"
+
+    try:
+        # Convert the section content string to bytes
+        section_bytes = io.BytesIO(section_content.encode('utf-8'))
+        
+        print(f"Attempting to upload section {section_num} to: {DATASET_REPO_ID}/{section_filename_in_repo}")
+        
+        upload_file(
+            path_or_fileobj=section_bytes,
+            path_in_repo=section_filename_in_repo,
+            repo_id=DATASET_REPO_ID,
+            repo_type="dataset",
+            token=HF_TOKEN,
+            commit_message=f"Add section {section_num} ({content_type}): {safe_company_name} for {user_email} (Run: {run_id[:8]})" # Shorten run_id in commit
+        )
+        print(f"Successfully uploaded section {section_num}: {section_filename_in_repo}")
+        return True # Indicate success
+        
+    except Exception as e:
+        print(f"ERROR uploading section {section_num} to HF Dataset '{DATASET_REPO_ID}': {e}")
+        # traceback.print_exc() # Uncomment for debugging upload issues
+        return False # Indicate failure
+
+def save_profile_hf_dataset(profile_content: str, content_type: str, run_id: str, company_name: str, user_email: str):
+    """Uploads the final aggregated profile (HTML or JSON string) to the private HF Dataset."""
+    if not HF_TOKEN or not api or "your-username" in DATASET_REPO_ID:
+        print(f"Final profile saving skipped for run {run_id}: HF Token/Repo ID not configured.")
+        return None 
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S') # Use current time for final file name
+    
+    # Sanitize names
+    safe_company_name = "".join(c for c in company_name if c.isalnum() or c in (' ', '_')).rstrip().replace(' ', '_')
+    sanitized_email = user_email.replace('@', '_at_').replace('.', '_')
+    
+    file_extension = "html" if content_type == "html" else "json"
+    
+    # Define path within the specific run's directory
+    # Example: profiles/user_at_domain_com/RUN_ID_UUID/final_profile_20240101_120000.html
+    profile_filename_in_repo = f"profiles/{sanitized_email}/{run_id}/final_profile_{timestamp}.{file_extension}"
+
+    try:
+        # Convert the profile string to bytes
+        profile_bytes = io.BytesIO(profile_content.encode('utf-8'))
+        
+        print(f"Attempting to upload final profile ({content_type}) to: {DATASET_REPO_ID}/{profile_filename_in_repo}")
+        
+        upload_file(
+            path_or_fileobj=profile_bytes,
+            path_in_repo=profile_filename_in_repo,
+            repo_id=DATASET_REPO_ID,
+            repo_type="dataset",
+            token=HF_TOKEN,
+            commit_message=f"Add final {content_type.upper()} profile: {safe_company_name} for {user_email} (Run: {run_id[:8]})"
+        )
+        print(f"Successfully uploaded final profile: {profile_filename_in_repo}")
+        return profile_filename_in_repo 
+        
+    except Exception as e:
+        print(f"ERROR uploading final profile for run {run_id} to HF Dataset '{DATASET_REPO_ID}': {e}")
+        # traceback.print_exc() # Uncomment for debugging
+        return None 
+
 # --- Authentication Backend ---
 
 def send_auth_code(email, auth_state):
@@ -288,49 +367,6 @@ def send_auth_code(email, auth_state):
         # Existing text output:
         return f"An error occurred while sending the email: {e}. Please try again.", auth_state, gr.update(visible=True), gr.update(visible=False)
 
-    # # --- If user email was sent, attempt to send the structured log email ---
-    # if auth_state["code_sent"] and TRACKING_EMAIL:
-    #     try:
-    #         timestamp = datetime.now().isoformat()
-    #         log_subject = f"ProfileDash Usage: {email} - {timestamp}" # Informative subject
-
-    #         # Create log data dictionary
-    #         log_data = {
-    #             "timestamp": timestamp,
-    #             "userEmail": email,
-    #             "event": "AuthCodeSent",
-    #             "appVersion": APP_VERSION, # Assumes APP_VERSION is defined globally
-    #             "status": "Success"
-    #             # Add other relevant info here if needed in the future
-    #         }
-
-    #         # Convert to JSON string
-    #         log_body_json = json.dumps(log_data, indent=2)
-
-    #         # Create log email message
-    #         log_message = Mail(
-    #             from_email=Email(SENDER_EMAIL, "ProfileDash Logs"), # Specific sender name for logs
-    #             to_emails=To(TRACKING_EMAIL),
-    #             subject=log_subject,
-    #             plain_text_content=Content("text/plain", log_body_json) # Send JSON in plain text body
-    #         )
-
-    #         # Send the log email
-    #         log_response = sg.client.mail.send.post(request_body=log_message.get())
-
-    #         if 200 <= log_response.status_code < 300:
-    #             print(f"Successfully sent JSON tracking log email to {TRACKING_EMAIL}.")
-    #         else:
-    #              # Log failure but don't block user
-    #              print(f"Warning: Failed to send JSON tracking log email. Status: {log_response.status_code}, Body: {log_response.body}")
-
-    #     except Exception as log_e:
-    #         # Log exception but don't block user
-    #         print(f"Warning: Exception sending JSON tracking log email: {log_e}")
-    #         traceback.print_exc()
-
-    # --- Return success confirmation to the user (using your existing text) ---
-    # NOTE: Removed the old log_user_activity call comment
     return f"Authentication code sent to {email}. Enter code below and press Verify Code.", auth_state, gr.update(visible=False), gr.update(visible=True)
 
 
@@ -379,6 +415,44 @@ def run_initial_generation(file_paths, auth_state, progress=gr.Progress(track_tq
     """
     start_run_time = time.time()
     status_log = []
+    run_id = str(uuid.uuid4()) # <-- Generate unique ID for this run
+    user_email_for_run = auth_state.get('email', 'unknown_user') # Get user email
+
+    # --- START: Log RunStarted ---
+    try:
+        # Basic file metadata (improve with hashing later if needed for resume check)
+        input_file_metadata = []
+        if file_paths:
+            if not isinstance(file_paths, list): file_paths = [file_paths] # Ensure list
+            for fp in file_paths:
+                if fp and os.path.exists(fp):
+                    input_file_metadata.append({
+                        "name": os.path.basename(fp),
+                        "size": os.path.getsize(fp)
+                        # Add hash later: "sha256": calculate_sha256(fp) 
+                    })
+                elif fp:
+                    input_file_metadata.append({"name": os.path.basename(fp), "error": "File not found/accessible"})
+                else:
+                    input_file_metadata.append({"name": "None", "error": "Invalid file input"})
+
+        # Derive company name early (might need refinement if logic changes)
+        # This duplicates logic from later - consider refactoring later
+        first_valid_filename = next((meta['name'] for meta in input_file_metadata if 'error' not in meta and meta['name'] != "None"), "Unknown_Company_RunStart")
+        run_company_name = os.path.splitext(first_valid_filename)[0].replace('_', ' ')
+
+        log_event = {
+            "event": "RunStarted",
+            "runId": run_id,
+            "companyName": run_company_name,
+            "inputFileMetadata": input_file_metadata,
+            "appVersion": APP_VERSION
+        }
+        save_log_entry_hf_dataset(user_email=user_email_for_run, event_data=log_event)
+        print(f"Run {run_id} started for user {user_email_for_run}, company {run_company_name}.")
+    except Exception as log_start_e:
+        print(f"Non-critical error logging RunStarted to dataset: {log_start_e}")
+    # --- END: Log RunStarted ---
 
     def get_run_elapsed():
         elapsed = time.time() - start_run_time
@@ -520,32 +594,85 @@ def run_initial_generation(file_paths, auth_state, progress=gr.Progress(track_tq
                 executor.submit(generate_initial_section, section, documents_for_api, persona, analysis_specs, output_format, insight_model): section
                 for section in sections
             }
+            
+            # --- This is the loop to modify ---
             for future in as_completed(future_to_section):
                 section_def = future_to_section[future]
                 section_num = section_def["number"]; section_title = section_def["title"]
                 status_update = f"Processing Section {section_num}..." # Default status
+                
                 try:
-                    s_num_result, content_result = future.result()
+                    # Get the result (section number and HTML content string)
+                    s_num_result, content_result = future.result() 
+                    
+                    # Check for generation errors indicated within the content
                     if not content_result or '<p class="error">' in content_result:
                         status_update = f"PARTIAL FAIL: Section {s_num_result} ('{section_title}')"
                         section_processing_error = True
-                        if not content_result:
+                        if not content_result: # Handle completely empty return
+                            # Create default error HTML if function returned None/empty
                             content_result = f'<div class="section" id="section-{s_num_result}"><h2>{s_num_result}. {section_title}</h2><p class="error">ERROR: Empty content returned.</p></div>'
                     else:
                         status_update = f"SUCCESS: Section {s_num_result} ('{section_title}')"
+                    
+                    # Store the result (HTML string or error HTML string) for final aggregation
                     initial_results[s_num_result] = content_result
+
+                    # --- START: Save Individual Section to Dataset ---
+                    try:
+                        # Ensure necessary variables are defined and accessible here
+                        # run_id, company_name, user_email_for_run
+                        if content_result: # Only save if content exists (even error HTML)
+                                section_saved_successfully = save_section_hf_dataset(
+                                    section_num=s_num_result,
+                                    section_content=content_result,
+                                    content_type="html", # Hardcoded HTML for now
+                                    run_id=run_id,       # From start of function
+                                    company_name=company_name, # Determined before loop
+                                    user_email=user_email_for_run # From start of function
+                                )
+                                if not section_saved_successfully:
+                                    # Optionally log a warning to the main status if saving failed
+                                    print(f"Warning: Failed to save section {s_num_result} to dataset for run {run_id}.")
+                                    # status_update += " (Archive Save Failed)" # Optional: Append to user status
+                        else:
+                                print(f"Skipping dataset save for empty section {s_num_result}")
+                    except Exception as section_save_e:
+                            # Log error but don't stop the main generation
+                            print(f"Non-critical error saving section {s_num_result} to dataset: {section_save_e}")
+                            # status_update += " (Archive Error)" # Optional: Append to user status
+                    # --- END: Save Individual Section ---
+
                 except Exception as e:
+                    # Handle exceptions during the future.result() call (LLM/processing error)
                     status_update = f"FAIL: Section {section_num} ('{section_title}') - {type(e).__name__}"
                     error_content_html = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">ERROR: Generation failed: {e}</p></div>'
                     initial_results[section_num] = error_content_html
                     section_processing_error = True
                     print(f"{get_run_elapsed()} Error in future for Sec {section_num}: {e}")
-                    # traceback.print_exc() # Optional full trace
+                    # traceback.print_exc() # Optional full trace for debugging generation errors
 
+                    # --- START: Save Error Section Stub to Dataset ---
+                    # Even if generation fails, save the error stub so we know an attempt was made
+                    try:
+                        save_section_hf_dataset(
+                            section_num=section_num, # Use section_num from the loop context
+                            section_content=error_content_html, # Save the generated error HTML
+                            content_type="html", 
+                            run_id=run_id,
+                            company_name=company_name, 
+                            user_email=user_email_for_run
+                        )
+                    except Exception as error_section_save_e:
+                        print(f"Non-critical error saving error stub for section {section_num} to dataset: {error_section_save_e}")
+                    # --- END: Save Error Section Stub ---
+
+                # Update progress bar and status log after handling result and attempting save
                 completed_sections += 1
                 progress(completed_sections / total_sections, desc=status_update)
                 status = append_status(status_update)
-                yield status, None, gr.update(visible=False) # Status, DL Path, Reset State
+                yield status, None, gr.update(visible=False) # Status, DL Path (None), Reset State (Hidden)
+
 
     except Exception as e:
         error_msg = f"Error during parallel generation: {str(e)}\n{traceback.format_exc()}"
@@ -557,38 +684,139 @@ def run_initial_generation(file_paths, auth_state, progress=gr.Progress(track_tq
     yield status, None, gr.update(visible=False)
     progress(1.0, desc="Finalizing...")
 
-    # --- 3. Aggregate, Generate Final HTML, Save to Temp File ---
+    # --- START: Replacement Block for Final Aggregation, Saving, and Logging ---
     ordered_initial_contents = []
+    # Ensure sections are sorted by number when aggregating
     for section_def in sorted(sections, key=lambda x: x["number"]):
-        content = initial_results.get(section_def["number"], f'<div class="section" id="section-{section_def["number"]}"><h2>{section_def["number"]}. {section_def["title"]}</h2><p class="error">ERROR: Content missing.</p></div>')
+        # Use the content from initial_results, which includes error HTML for failed sections
+        content = initial_results.get(section_def["number"], 
+                                      # Fallback just in case a section number was missed entirely
+                                      f'<div class="section" id="section-{section_def["number"]}"><h2>{section_def["number"]}. {section_def["title"]}</h2><p class="error">ERROR: Content completely missing for aggregation.</p></div>')
         ordered_initial_contents.append(content)
 
     final_status_message_base = "Profile generation complete!"
-    if section_processing_error: final_status_message_base += " (with errors)"
+    if section_processing_error: 
+        final_status_message_base += " (with errors)"
 
     status = append_status(final_status_message_base + " Saving result...")
-    yield status, None, gr.update(visible=False)
+    yield status, None, gr.update(visible=False) # Update status before final save attempts
 
     temp_file_path = None
+    final_profile_saved_to_dataset = False # Flag to track dataset save status
+    
     try:
+        # --- Generate Final HTML ---
         final_html = generate_full_html_profile(company_name, sections, ordered_initial_contents, APP_VERSION)
-        output_filename = f"{company_name}_Profile_{timestamp}.html"
+        
+        # --- Determine timestamp for output filename (should be defined earlier in the function) ---
+        # Make sure 'timestamp' variable from Step 1.1 or similar is accessible here
+        # If not, uncomment and adjust the line below:
+        # timestamp = time.strftime('%Y%m%d_%H%M%S') 
+        output_filename = f"{company_name}_Profile_{timestamp}.html" 
 
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix=".html", delete=False) as temp_f:
-            temp_f.write(final_html)
-            temp_file_path = temp_f.name
-            print(f"Saved final profile to temporary file: {temp_file_path}")
+        # --- Save to Temp File for Download (Required for Gradio download trigger) ---
+        # Ensure final_html is not empty before writing
+        if final_html and isinstance(final_html, str):
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix=".html", delete=False) as temp_f:
+                temp_f.write(final_html)
+                temp_file_path = temp_f.name
+                print(f"Saved final profile to temporary file: {temp_file_path}")
+        else:
+             print(f"ERROR: final_html content is empty or invalid for run {run_id}. Cannot save temp file.")
+             final_html = "" # Ensure final_html is empty string if invalid
+             temp_file_path = None # Ensure no temp file path is passed
+             # Log this specific failure
+             raise ValueError("Generated final_html was empty or invalid, cannot proceed.")
 
-        final_status_message = append_status(final_status_message_base + f". Download '{output_filename}' should start automatically.")
-        # Yield final status, TEMP FILE PATH, and make Reset button visible
-        yield final_status_message, temp_file_path, gr.update(visible=True)
+        # --- Save Final Profile to Private Dataset ---
+        try:
+            # Only attempt save if final_html was successfully generated
+            if final_html: 
+                saved_repo_path = save_profile_hf_dataset(
+                    profile_content=final_html, 
+                    content_type="html", # Hardcoded HTML for now
+                    run_id=run_id,       # From start of function
+                    company_name=company_name, 
+                    user_email=user_email_for_run # Defined at start of function
+                )
+                if saved_repo_path:
+                    print(f"Final profile also saved to private dataset: {DATASET_REPO_ID}/{saved_repo_path}")
+                    final_profile_saved_to_dataset = True
+                else:
+                    # This condition is hit if save_profile_hf_dataset returns None due to error
+                    print(f"Warning: Failed to save final profile to private dataset for run {run_id}.")
+                    # Optionally update status log for user feedback if critical
+                    # status = append_status("Warning: Failed to save profile archive.")
+                    # yield status, temp_file_path, gr.update(visible=True) # Re-yield if status changes
+            else:
+                # This case should ideally not happen if the check above worked, but good for safety
+                print(f"Skipping final profile dataset save for run {run_id}: final_html is empty.")
+        except Exception as final_save_e:
+             # Catch errors during the dataset save attempt
+             print(f"Non-critical error saving final profile for run {run_id} to dataset: {final_save_e}")
+             # Optionally log this error to the dataset itself? Might be overkill.
+
+        # --- Prepare and Yield Final Status to User ---
+        # Only indicate successful download if temp file was created
+        if temp_file_path:
+            final_status_message = append_status(final_status_message_base + f". Download '{output_filename}' should start automatically.")
+            yield final_status_message, temp_file_path, gr.update(visible=True)
+        else:
+            # If temp file failed (e.g., final_html was empty), yield error status
+            error_final = "Error: Failed to generate final profile content."
+            status = append_status(error_final)
+            yield status, None, gr.update(visible=False) # No download file, hide reset
+            # Log failure here before returning
+            try:
+                log_event = {
+                    "event": "RunFailed", "runId": run_id, "status": "Error",
+                    "errorStage": "FinalHTMLGeneration", "errorMessage": error_final
+                }
+                save_log_entry_hf_dataset(user_email=user_email_for_run, event_data=log_event)
+            except Exception as log_fail_e: print(f"Error logging RunFailed: {log_fail_e}")
+            return status, None, gr.update(visible=False) # Return error state
+
+        # --- Log RunCompleted AFTER successful generation & yielding ---
+        try:
+            log_event = {
+                "event": "RunCompleted",
+                "runId": run_id,
+                "status": "Success" if temp_file_path else "Error", # Mark success only if file generated
+                "finalProfileSavedToDataset": final_profile_saved_to_dataset,
+                "sectionProcessingErrorEncountered": section_processing_error # Track if any section failed
+            }
+            save_log_entry_hf_dataset(user_email=user_email_for_run, event_data=log_event)
+        except Exception as log_complete_e:
+            print(f"Non-critical error logging RunCompleted to dataset: {log_complete_e}")
+
+        # --- Final Return for Success ---
         return final_status_message, temp_file_path, gr.update(visible=True)
 
     except Exception as e:
-         error_final = f"Error generating/saving final HTML: {str(e)}"
-         status = append_status(error_final + f"\nTraceback:\n{traceback.format_exc()}")
-         yield status, None, gr.update(visible=False)
+         # --- Handle Exceptions during final_html generation or temp file saving ---
+         error_final = f"Error during final profile stage: {type(e).__name__} - {str(e)}"
+         print(f"Run {run_id}: {error_final}")
+         # traceback.print_exc() # Uncomment for detailed debugging if needed
+         status = append_status(error_final)
+         yield status, None, gr.update(visible=False) # Yield error status, no download file
+         
+         # --- Log RunFailed on final stage exception ---
+         try:
+             log_event = {
+                 "event": "RunFailed",
+                 "runId": run_id,
+                 "status": "Exception",
+                 "errorStage": "FinalAggregation/Saving",
+                 "errorType": type(e).__name__,
+                 "errorMessage": str(e)
+             }
+             save_log_entry_hf_dataset(user_email=user_email_for_run, event_data=log_event)
+         except Exception as log_fail_e:
+             print(f"Non-critical error logging RunFailed after exception to dataset: {log_fail_e}")
+             
+         # --- Final Return for Exception ---
          return status, None, gr.update(visible=False)
+    # --- END: Replacement Block ---
 
 # --- Build the Gradio Blocks Interface (REVISED - No HTML Preview) ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
