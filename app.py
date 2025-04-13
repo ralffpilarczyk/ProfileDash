@@ -11,18 +11,18 @@ from huggingface_hub import upload_file, HfApi
 import io 
 import uuid 
 import threading
+import base64
+from huggingface_hub import HfApi, hf_hub_download 
+from sendgrid.helpers.mail import (
+    Mail, Email, To, Content, Attachment, FileContent, FileName,
+    FileType, Disposition
+)
 
-# --- App Version ---
-# Updated version to reflect auto-download change
+# --- Variables ---
 APP_VERSION = "v1.0.4"
 LOG_FILE = "user_log.json"
-
-# --- START: Add Hugging Face Dataset Configuration ---
-# IMPORTANT: Replace 'your-username' with your ACTUAL Hugging Face username!
-# Use the EXACT dataset name, including spaces: "ProfileDash Data"
 DATASET_REPO_ID = "ralfpilarczyk/ProfileDashData" 
-
-# Load the secret token from the Space environment variables (Secrets)
+PERMITTED_USERS_FILE = "permitted_users.json"
 HF_TOKEN = os.environ.get("HF_DATA_TOKEN") 
 
 # Initialize the Hub API client 
@@ -104,7 +104,72 @@ def generate_auth_code():
     """Generates a 4-digit authentication code."""
     return str(random.randint(1000, 9999))
 
-# ---  START: New Logging Function ---
+
+def get_permitted_users():
+    """
+    Downloads and parses the permitted users config from the HF Dataset.
+    Returns a dictionary with 'allowed_domains' and 'allowed_emails' lists (lowercase).
+    Returns fallback defaults if download/parsing fails or config is invalid.
+    """
+    # Define fallback defaults INSIDE the function
+    # You can keep ALLOWED_DOMAIN defined globally if you still want it as a code-level default
+    fallback_config = {"allowed_domains": [ALLOWED_DOMAIN.lower()], "allowed_emails": []} 
+    
+    if not HF_TOKEN or not api or "your-username" in DATASET_REPO_ID: # Check base config
+        print(f"WARNING: Cannot fetch permitted users config. HF Token/Repo ID not configured. Using code default: {fallback_config}")
+        return fallback_config
+
+    try:
+        print(f"Attempting to download {PERMITTED_USERS_FILE} from {DATASET_REPO_ID}")
+        # Use hf_hub_download to get file content (returns path)
+        downloaded_path = api.hf_hub_download(
+            repo_id=DATASET_REPO_ID,
+            filename=PERMITTED_USERS_FILE,
+            repo_type="dataset",
+            token=HF_TOKEN,
+            force_download=True, # Get latest version each time
+            resume_download=False, 
+            # Consider cache strategy later if file rarely changes & perf is issue
+        )
+        
+        if downloaded_path and os.path.exists(downloaded_path):
+             with open(downloaded_path, 'r', encoding='utf-8') as f:
+                 permitted_data = json.load(f)
+             print("Permitted users config loaded successfully from dataset.")
+             
+             # Validate structure and ensure keys exist, converting to lowercase
+             valid_structure = True
+             if not isinstance(permitted_data, dict):
+                 valid_structure = False
+             else:
+                 domains = permitted_data.get("allowed_domains")
+                 emails = permitted_data.get("allowed_emails")
+                 if not isinstance(domains, list) or not isinstance(emails, list):
+                     valid_structure = False
+             
+             if not valid_structure:
+                  print(f"WARNING: {PERMITTED_USERS_FILE} has incorrect structure. Using code default: {fallback_config}")
+                  return fallback_config
+             
+             # Return data with lists converted to lowercase
+             return {
+                 "allowed_domains": [domain.lower() for domain in domains],
+                 "allowed_emails": [email.lower() for email in emails]
+             }
+        else:
+            print(f"Warning: {PERMITTED_USERS_FILE} not found or empty path returned from download. Using code default: {fallback_config}")
+            return fallback_config
+
+    except json.JSONDecodeError as json_err:
+         print(f"ERROR parsing {PERMITTED_USERS_FILE}: {json_err}. Using code default: {fallback_config}")
+         return fallback_config
+    except Exception as e:
+        print(f"ERROR downloading or processing {PERMITTED_USERS_FILE}: {e}")
+        # traceback.print_exc() # Uncomment for detailed debugging
+        print(f"Using code default due to error: {fallback_config}")
+        return fallback_config
+
+# ---  START: Logging Function ---
 def save_log_entry_hf_dataset(user_email: str, event_data: dict):
     """Uploads a structured log entry as a JSON file to the private HF Dataset."""
     # Check configuration before proceeding
@@ -149,117 +214,117 @@ def save_log_entry_hf_dataset(user_email: str, event_data: dict):
         # Log errors but don't crash the main application
         print(f"ERROR uploading log to HF Dataset '{DATASET_REPO_ID}': {e}")
         # traceback.print_exc() # Uncomment only if needed for deep debugging
-# --- END: New Logging Function ---
+# --- END:  Logging Function ---
 
-# Paste this function definition alongside your other helper functions
-
+# --- START: Complete Background Task Function (with Direct String Base64 Attachment) ---
 def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, temp_file_paths: list):
     """
     Performs the entire profile generation in a background thread, 
-    saves results to dataset, and emails user upon completion or failure.
-    NOTE: This function runs in a separate thread and CANNOT directly 
-          update Gradio components using 'yield'. It interacts via dataset logs/files.
+    saves results to dataset, attempts to email result as Base64 attachment, 
+    and logs status.
     """
     start_run_time = time.time()
-    print(f"Background Run {run_id}: Started for {user_email}")
+    print(f"BG Run {run_id}: Started for {user_email}")
     
-    # --- LOCAL VARIABLES (Copied/Adapted from run_initial_generation) ---
-    # We need local copies or re-derivations of variables used inside the original function
-    # Re-create status logging mechanism if needed for internal tracking (won't show in UI)
-    background_log = []
-    def append_bg_log(message):
-         elapsed = time.time() - start_run_time
-         minutes = int(elapsed // 60)
-         seconds = int(elapsed % 60)
-         timestamped_message = f"[{minutes}'{seconds:02d}\"] {message}"
-         background_log.insert(0, timestamped_message)
-         print(f"BG Run {run_id}: {timestamped_message}") # Print to server logs
-         # We could potentially log detailed progress to a specific log file in the dataset too
-         # save_log_entry_hf_dataset(user_email, {"event": "ProgressUpdate", "runId": run_id, "detail": message})
+    # --- Function-local Helper for Background Logging ---
+    background_log_internal = [] 
+    def get_run_elapsed():
+        elapsed = time.time() - start_run_time
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        return f"[{minutes}'{seconds:02d}\"]"
 
+    def append_bg_log(message):
+        timestamped_message = f"{get_run_elapsed()} {message}"
+        background_log_internal.insert(0, timestamped_message) 
+        print(f"BG Run {run_id}: {timestamped_message}") 
+    # --- End of Local Helper ---
+
+    # Initialize status flags and variables
     section_processing_error = False
+    error_message_for_email = None
     final_profile_saved_to_dataset = False
-    final_profile_repo_path = None # Store the path if saved
-    error_message_for_email = None # Store any critical error message
+    final_profile_repo_path = None 
+    company_name = "Unknown_Company" 
+    timestamp_for_filename = time.strftime('%Y%m%d_%H%M%S') 
+    final_html = "" # Initialize final_html
 
     try:
-        # --- 1. Configure Google AI (Essential in thread) ---
-        # Must configure within the thread as config might be thread-local or context-specific
+        # --- 1. Configure Google AI ---
+        append_bg_log("Configuring Google AI SDK...")
+        if not api_key:
+            raise ValueError("ERROR: API Key was not provided.")
         try:
-            print(f"BG Run {run_id}: Configuring genai...")
             genai.configure(api_key=api_key)
-            # Minimal test call (optional but good practice)
-            # test_model = genai.GenerativeModel("gemini-1.5-flash") 
-            # _ = test_model.generate_content("test") 
-            print(f"BG Run {run_id}: genai configured.")
             append_bg_log("Google AI SDK Configured OK.")
         except Exception as config_e:
-             error_msg = f"CRITICAL ERROR configuring Google AI SDK in background thread: {config_e}"
-             print(f"BG Run {run_id}: {error_msg}")
-             raise RuntimeError(error_msg) from config_e # Raise critical error to stop
+             error_msg = f"CRITICAL ERROR configuring Google AI SDK: {type(config_e).__name__} - {str(config_e)}"
+             append_bg_log(error_msg)
+             raise RuntimeError(error_msg) from config_e
 
-        # --- 2. Process Uploaded Documents (Adapted) ---
-        # Note: Assumes temp_file_paths are still valid. If not, need to pass file *content*.
-        # For simplicity now, assume paths are valid short-term. Robust solution might pass bytes.
-        append_bg_log("Reading uploaded documents...")
+        # --- 2. Process Uploaded Documents ---
+        append_bg_log("Processing uploaded documents...")
+        if not temp_file_paths: 
+            raise ValueError("No file paths provided.")
+            
+        if not isinstance(temp_file_paths, list): 
+            temp_file_paths = [temp_file_paths]
+            
         uploaded_data = {}
-        documents_for_api = []
-        company_name = "Uploaded_Company"
         total_size = 0
-        
-        # Need to re-implement the file reading and processing logic here
-        # (Copied & adapted from run_initial_generation, removed yields)
-        if not temp_file_paths: raise ValueError("No file paths provided to background task.")
-        if not isinstance(temp_file_paths, list): temp_file_paths = [temp_file_paths]
-        
         valid_files_count = 0
+
         for file_path in temp_file_paths:
-            # Simplified checks assuming path validity was checked before thread start
-            if file_path is None: continue
+            if file_path is None: 
+                append_bg_log("Warning: Invalid file input (None).")
+                continue
             filename = os.path.basename(file_path)
             try:
-                if not os.path.exists(file_path): continue # Skip if temp file vanished
-                if not filename.lower().endswith(".pdf"): continue
+                if not os.path.exists(file_path): 
+                    append_bg_log(f"Warning: Temp file not found: {file_path}.")
+                    continue
+                if not filename.lower().endswith(".pdf"):
+                    append_bg_log(f"Warning: Skipping non-PDF: {filename}")
+                    continue
                 file_size = os.path.getsize(file_path)
-                if file_size == 0: continue
+                if file_size == 0:
+                    append_bg_log(f"Warning: File '{filename}' is empty.")
+                    continue
+                
                 total_size += file_size
-                with open(file_path, 'rb') as f: uploaded_data[filename] = f.read()
+                with open(file_path, 'rb') as f:
+                    uploaded_data[filename] = f.read()
                 valid_files_count += 1
                 append_bg_log(f"Read: {filename} ({file_size // 1024} KB)")
             except Exception as read_err:
-                append_bg_log(f"Error reading '{filename}': {read_err}")
-                continue
-                
-        if not uploaded_data: raise ValueError("No valid PDF files were read in background task.")
-        if total_size > MAX_UPLOAD_BYTES: raise ValueError(f"Total size exceeds {MAX_UPLOAD_MB} MB limit.")
-        
+                 append_bg_log(f"Error reading '{filename}': {read_err}")
+                 continue 
+
+        if not uploaded_data: 
+            raise ValueError("No valid PDF files processed.")
+            
+        if total_size > MAX_UPLOAD_BYTES: 
+            raise ValueError(f"Upload failed: Size ({total_size / (1024*1024):.2f} MB) exceeds {MAX_UPLOAD_MB} MB.")
+
         append_bg_log(f"Encoding {valid_files_count} files for API (base64)...")
         documents_for_api = load_document_content(uploaded_data) 
-        if not documents_for_api: raise ValueError("Failed to process documents (base64).")
-        
-        first_filename = next(iter(uploaded_data.keys()))
+        if not documents_for_api: 
+            raise ValueError("Failed to process documents (base64).")
+            
+        first_filename = next(iter(uploaded_data.keys())) 
         company_name = os.path.splitext(first_filename)[0].replace('_', ' ')
-        timestamp = time.strftime('%Y%m%d_%H%M%S') # Define timestamp for this run
-        append_bg_log(f"Company: {company_name}. Starting generation...")
+        append_bg_log(f"Company: {company_name}. Starting parallel generation...")
         
-        # Clean up temp files if they were passed by path (important!)
-        # This assumes the main thread doesn't need them after starting the background thread.
-        # Be cautious if the main thread *does* still need them (e.g., for download link).
-        # If using direct download, main thread needs path. If attaching from dataset, can delete.
-        # Let's assume we email a link, so we can clean up.
-        # for file_path in temp_file_paths:
-        #     try:
-        #         if file_path and os.path.exists(file_path):
-        #             os.remove(file_path)
-        #     except Exception as cleanup_e:
-        #         print(f"BG Run {run_id}: Warning - could not clean up temp file {file_path}: {cleanup_e}")
-
-
-        # --- 3. Generate Sections in Parallel (Adapted) ---
-        append_bg_log(f"Starting parallel generation ({len(sections)} sections)...")
-        initial_results = {}
-        insight_model = create_insight_model() # Create model instance within thread
-        if not insight_model: raise RuntimeError("Failed to create insight model in background thread.")
+        # --- 3. Generate Sections in Parallel ---
+        total_sections = len(sections)
+        initial_results = {} 
+        completed_sections_count = 0 
+        
+        append_bg_log(f"Creating Gemini model instance...")
+        insight_model = create_insight_model() 
+        if not insight_model: 
+            raise RuntimeError("Failed to create insight model.")
+        append_bg_log("Model instance created. Submitting tasks...")
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             future_to_section = {
@@ -267,169 +332,255 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
                 for section in sections
             }
             
+            append_bg_log(f"Tasks submitted. Waiting for completion...")
             for future in as_completed(future_to_section):
                 section_def = future_to_section[future]
                 section_num = section_def["number"]; section_title = section_def["title"]
-                s_num_result, content_result = section_num, None # Defaults
+                s_num_result, content_result = section_num, None 
+                
                 try:
-                    s_num_result, content_result = future.result()
-                    if not content_result or '<p class="error">' in content_result:
-                        append_bg_log(f"PARTIAL FAIL: Section {s_num_result} ('{section_title}')")
+                    s_num_result, content_result = future.result() 
+                    if not content_result or '<p class="error">' in str(content_result):
+                        append_bg_log(f"PARTIAL FAIL: Section {s_num_result} ('{section_title}') generation reported error.")
                         section_processing_error = True
-                        if not content_result: content_result = f'<div class="section" id="section-{s_num_result}"><h2>{s_num_result}. {section_title}</h2><p class="error">ERROR: Empty content returned.</p></div>'
+                        if not content_result: content_result = f'<div class="section" id="section-{s_num_result}"><h2>{s_num_result}. {section_title}</h2><p class="error">ERROR: Generation function returned empty content.</p></div>'
                     else:
-                        append_bg_log(f"SUCCESS: Section {s_num_result} ('{section_title}')")
+                        append_bg_log(f"SUCCESS: Section {s_num_result} ('{section_title}') generated.")
                     initial_results[s_num_result] = content_result
                 except Exception as e:
-                    append_bg_log(f"FAIL: Section {section_num} ('{section_title}') - {type(e).__name__}")
-                    error_content_html = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">ERROR: Generation failed: {e}</p></div>'
+                    append_bg_log(f"FAIL: Section {section_num} ('{section_title}') hit exception - {type(e).__name__}: {e}")
+                    error_content_html = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">ERROR: Generation process failed unexpectedly: {e}</p></div>'
                     initial_results[section_num] = error_content_html
-                    content_result = error_content_html # Ensure error content is saved
+                    content_result = error_content_html 
                     section_processing_error = True
                 
-                # Save section (now happens inside the loop)
+                # Save Section to Dataset
                 try:
                     if content_result:
                          save_section_hf_dataset(
-                             section_num=s_num_result, section_content=content_result, content_type="html", 
-                             run_id=run_id, company_name=company_name, user_email=user_email
+                             section_num=s_num_result, 
+                             section_content=str(content_result), 
+                             content_type="html", 
+                             run_id=run_id, company_name=company_name, user_email=user_email 
                          )
+                    else:
+                         append_bg_log(f"Warning: Skipping dataset save for truly empty section {s_num_result}")
                 except Exception as section_save_e:
-                    append_bg_log(f"Error saving section {s_num_result} to dataset: {section_save_e}")
-        
-        append_bg_log("Aggregation complete. Generating final HTML...")
+                     append_bg_log(f"Non-critical error during save attempt for section {s_num_result}: {section_save_e}")
+                
+                completed_sections_count += 1
+                progress_percent = int((completed_sections_count / total_sections) * 100)
+                append_bg_log(f"Progress: {completed_sections_count}/{total_sections} ({progress_percent}%) sections processed.")
 
-        # --- 4. Aggregate and Save Final Profile (Adapted) ---
+        append_bg_log("All sections processed. Aggregating final profile...")
+
+        # --- 4. Aggregate and Save Final Profile ---
         ordered_initial_contents = []
         for section_def in sorted(sections, key=lambda x: x["number"]):
-            content = initial_results.get(section_def["number"], f'<div class="section" id="section-{section_def["number"]}"><h2>{section_def["number"]}. {section_title}</h2><p class="error">ERROR: Content missing.</p></div>')
-            ordered_initial_contents.append(content)
+            content = initial_results.get(section_def["number"], 
+                                          f'<div class="section" id="section-{section_def["number"]}"><h2>{section_def["number"]}. {section_def["title"]}</h2><p class="error">ERROR: Content missing during final aggregation.</p></div>')
+            ordered_initial_contents.append(str(content))
         
+        # ** Generate final_html string **
         final_html = generate_full_html_profile(company_name, sections, ordered_initial_contents, APP_VERSION)
 
         if final_html and isinstance(final_html, str):
+            append_bg_log("Final HTML generated. Saving to dataset...")
+            # ** Save final_html to dataset **
             saved_repo_path = save_profile_hf_dataset(
                 profile_content=final_html, content_type="html", run_id=run_id, 
                 company_name=company_name, user_email=user_email
             )
             if saved_repo_path:
                 final_profile_saved_to_dataset = True
-                final_profile_repo_path = saved_repo_path # Store for email link
-                append_bg_log(f"Final profile saved to dataset: {saved_repo_path}")
+                final_profile_repo_path = saved_repo_path 
+                append_bg_log(f"Final profile saved successfully to dataset: {saved_repo_path}")
             else:
                 append_bg_log("Warning: Failed to save final profile to dataset.")
-                # Decide if this is a critical failure for notification
-                error_message_for_email = "Profile generated but failed to save archive."
+                if not error_message_for_email: 
+                    error_message_for_email = "Profile generated but failed to save archive to dataset."
+                final_profile_saved_to_dataset = False
         else:
             append_bg_log("Error: Final HTML generation failed or produced empty content.")
-            # Decide if this is a critical failure
-            raise ValueError("Final HTML generation failed.")
+            raise ValueError("Final HTML generation failed, cannot save profile.") 
 
     except Exception as generation_e:
-        # Catch errors from any stage above (config, pdf processing, generation, final saving)
-        print(f"BG Run {run_id}: CRITICAL ERROR during generation: {generation_e}")
-        traceback.print_exc()
-        section_processing_error = True # Mark as error
+        # Catch errors from any stage within the main try block
+        print(f"BG Run {run_id}: CRITICAL ERROR during generation pipeline: {generation_e}")
+        traceback.print_exc() 
+        section_processing_error = True 
         error_message_for_email = f"Profile generation failed: {type(generation_e).__name__} - {str(generation_e)}"
-        # Log RunFailed here
+        
+        # Log RunFailed
         try:
              log_event = {"event": "RunFailed", "runId": run_id, "status": "Exception", 
-                          "errorStage": "BackgroundGeneration", "errorType": type(generation_e).__name__,
+                          "errorStage": "BackgroundGenerationPipeline", "errorType": type(generation_e).__name__,
                           "errorMessage": str(generation_e)}
              save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
-        except Exception as log_fail_e: print(f"Error logging RunFailed: {log_fail_e}")
+        except Exception as log_fail_e: print(f"Error logging RunFailed after main exception: {log_fail_e}")
 
     # --- 5. Send Email Notification ---
-    print(f"BG Run {run_id}: Preparing email notification for {user_email}")
+    append_bg_log("Preparing email notification...")
     email_subject = ""
     email_html_content = ""
-    
-    if not error_message_for_email and final_profile_saved_to_dataset:
-        # --- SUCCESS EMAIL ---
-        status_string = "completed successfully"
-        if section_processing_error:
-            status_string += " (with some errors during section generation)"
-        
-        email_subject = f"ProfileDash: Profile for {company_name} is Ready"
-        # Option A: Link to Dataset File (Requires user login to HF)
-        # Construct the URL to the file in the private dataset
-        # Note: Direct links might change structure, linking to the dataset folder might be safer
-        dataset_url = f"https://huggingface.co/datasets/{DATASET_REPO_ID}/tree/main/profiles/{user_email.replace('@','_at_').replace('.', '_')}/{run_id}"
-        file_url = f"https://huggingface.co/datasets/{DATASET_REPO_ID}/blob/main/{final_profile_repo_path}" # More direct link
+    attachment_object = None # Initialize attachment object variable
 
-        email_html_content = f"""
-        <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p>
-        <p>You can view the generated profile in the private dataset (requires Hugging Face login):</p>
-        <p><a href="{file_url}" target="_blank">View Profile: {os.path.basename(final_profile_repo_path)}</a></p>
-        <p>(Run ID: {run_id})</p>
-        <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
-        """
-        # # Option B: Attach File (Less Recommended)
-        # # Needs download first -> more complex, size limits, security
-        # try:
-        #    local_path = api.hf_hub_download(...) # Download the file
-        #    with open(local_path, 'rb') as f: file_data = f.read()
-        #    encoded_file = base64.b64encode(file_data).decode()
-        #    attachment = Attachment(FileContent(encoded_file), FileName(...), FileType(...), Disposition(...))
-        #    # Add attachment to mail object
-        # except Exception as attach_e: print(f"Error attaching file: {attach_e}")
+    # Determine Final Outcome
+    generation_succeeded_fully = not error_message_for_email and final_profile_saved_to_dataset
+    generation_completed_with_errors = (section_processing_error or not final_profile_saved_to_dataset) and not error_message_for_email
+    generation_failed_critically = error_message_for_email is not None
+
+    # --- Compose Email Based on Outcome ---
+    if generation_succeeded_fully:
+        # --- SUCCESS: Encode final_html directly and attach ---
+        status_string = "completed successfully"
+        email_subject = f"ProfileDash: Profile for {company_name} is Ready"
+
+        # Use the final_html string generated earlier AND final_profile_repo_path for filename
+        if final_html and isinstance(final_html, str) and final_profile_repo_path: 
+            try:
+                append_bg_log("Encoding HTML content to Base64 for attachment...")
+                
+                # *** Encode the final_html string directly to Base64 ***
+                encoded_content = base64.b64encode(final_html.encode('utf-8')).decode('ascii')
+                
+                append_bg_log("Base64 encoding complete. Creating attachment object...")
+                
+                # Construct a filename for the attachment
+                attachment_filename = os.path.basename(final_profile_repo_path) 
+                if not attachment_filename.lower().endswith('.html'):
+                    attachment_filename += ".html"
+
+                # Create the SendGrid Attachment object using encoded content
+                attachment_object = Attachment(
+                    FileContent(encoded_content), # Base64 encoded string
+                    FileName(attachment_filename),
+                    FileType('text/html'),
+                    Disposition('attachment')
+                )
+                append_bg_log("Attachment object created successfully.")
+                
+                # Set success email body mentioning attachment
+                email_html_content = f"""
+                <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p>
+                <p>The generated profile is attached to this email.</p>
+                <p>(Run ID: {run_id})</p>
+                <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
+                """
+            except Exception as attach_prep_e:
+                # Handle errors during encoding or Attachment object creation
+                append_bg_log(f"ERROR preparing Base64 attachment from string: {attach_prep_e}.")
+                traceback.print_exc()
+                # Fallback email content (No link, just notification of error)
+                email_html_content = f"""
+                <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}, but there was an error preparing the file for attachment.</p>
+                <p>Please try generating the profile again or contact support if the issue persists.</p> 
+                <p>(Run ID: {run_id})</p>
+                <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
+                """
+        else:
+            # Case where final_html was empty/invalid or final profile wasn't saved
+            append_bg_log("Final HTML content or repo path not available, cannot attach. Sending note.")
+            email_html_content = f"""
+            <p>Your ProfileDash profile generation for <strong>{company_name}</strong> completed, but the final profile could not be located or generated correctly for attachment.</p>
+            <p>Please try generating the profile again or contact support.</p> 
+            <p>(Run ID: {run_id})</p>
+            <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
+            """
         
-        # Log RunCompleted after successful generation & saving confirmation
+        # Log RunCompleted status for full success
         try:
              log_event = {"event": "RunCompleted", "runId": run_id, "status": "Success",
                           "finalProfileSaved": final_profile_saved_to_dataset,
                           "sectionProcessingErrorEncountered": section_processing_error}
              save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
-        except Exception as log_complete_e: print(f"Error logging RunCompleted: {log_complete_e}")
+        except Exception as log_complete_e: print(f"Error logging RunCompleted success: {log_complete_e}")
 
-    else:
+    elif generation_completed_with_errors:
+         # --- PARTIAL SUCCESS / COMPLETED WITH ERRORS EMAIL ---
+         status_string = "completed with some errors"
+         if section_processing_error: status_string += " during section generation"
+         if not final_profile_saved_to_dataset: status_string += " (final profile save failed)"
+         email_subject = f"ProfileDash: Profile for {company_name} Completed (with errors)"
+         email_html_content = f"""
+         <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p>
+         <p>Some sections may contain errors or be incomplete. You may want to try generating the profile again or check the logs.</p> 
+         <p>(Run ID: {run_id})</p>
+         <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
+         """
+         # Log RunCompleted with Error status
+         try:
+             log_event = {"event": "RunCompleted", "runId": run_id, "status": "CompletedWithErrors",
+                          "finalProfileSaved": final_profile_saved_to_dataset, 
+                          "sectionProcessingErrorEncountered": section_processing_error}
+             save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
+         except Exception as log_complete_e: print(f"Error logging RunCompletedWithErrors: {log_complete_e}")
+    
+    else: # generation_failed_critically is True
         # --- FAILURE EMAIL ---
         email_subject = f"ProfileDash: Profile Generation Failed for {company_name}"
+        error_details = error_message_for_email if error_message_for_email else 'An unspecified critical error occurred.'
         email_html_content = f"""
         <p>Unfortunately, the ProfileDash profile generation for <strong>{company_name}</strong> failed.</p>
-        <p>Error details: {error_message_for_email or 'An unknown error occurred during processing.'}</p>
-        <p>Some intermediate sections might have been saved to the dataset archive.</p>
+        <p>Error details: {error_details}</p>
+        <p>Please check the logs or contact support if the issue persists.</p>
         <p>(Run ID: {run_id})</p>
         <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
         """
-        # Ensure RunFailed was logged within the main try/except block
+        # RunFailed log should have already been attempted in the main except block
 
-    # Send the email using SendGrid client (sg)
-    if sg:
+    # --- Send the Email (Common logic for all outcomes) ---
+    if sg: 
         try:
             message = Mail(
                 from_email=Email(SENDER_EMAIL, "ProfileDash Notification"),
                 to_emails=To(user_email),
                 subject=email_subject,
-                html_content=Content("text/html", email_html_content)
+                html_content=Content("text/html", email_html_content) 
             )
+            
+            if attachment_object:
+                message.attachment = attachment_object
+                append_bg_log("Base64 Attachment added to email message.")
+                
             response = sg.client.mail.send.post(request_body=message.get())
+            
+            log_email_event_type = "NotificationEmailSent"
+            email_log_status = "Unknown"; email_outcome = "Unknown"; status_code = None
+
             if 200 <= response.status_code < 300:
-                print(f"BG Run {run_id}: Notification email sent successfully to {user_email}.")
-                # Log EmailSent success
-                try:
-                    log_event = {"event": "NotificationEmailSent", "runId": run_id, "status": "Success", "outcome": "Completed" if not error_message_for_email else "Failed"}
-                    save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
-                except Exception as log_email_e: print(f"Error logging EmailSent: {log_email_e}")
+                append_bg_log(f"Notification email sent successfully to {user_email}.")
+                email_log_status = "Success"
             else:
-                print(f"BG Run {run_id}: Failed to send notification email to {user_email}. Status: {response.status_code}")
-                # Log EmailSent failure
-                try:
-                    log_event = {"event": "NotificationEmailSent", "runId": run_id, "status": "Failure", "statusCode": response.status_code}
-                    save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
-                except Exception as log_email_e: print(f"Error logging EmailSent failure: {log_email_e}")
+                response_body_str = str(response.body)[:1000] 
+                append_bg_log(f"Failed to send notification email to {user_email}. Status: {response.status_code} Body: {response_body_str}") 
+                email_log_status = "Failure"
+                status_code = response.status_code
+
+            if generation_succeeded_fully: email_outcome = "Completed"
+            elif generation_completed_with_errors: email_outcome = "CompletedWithErrors"
+            else: email_outcome = "Failed"
+            
+            try:
+                log_event = {"event": log_email_event_type, "runId": run_id, "status": email_log_status, "outcome": email_outcome}
+                if status_code: log_event["statusCode"] = status_code
+                if email_log_status == "Failure": log_event["sendgridResponseBody"] = response_body_str 
+                save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
+            except Exception as log_email_e: print(f"Error logging {log_email_event_type} {email_log_status}: {log_email_e}")
 
         except Exception as email_ex:
-            print(f"BG Run {run_id}: Exception sending notification email: {email_ex}")
-            # Log EmailSent exception
+            append_bg_log(f"Exception sending notification email: {email_ex}")
+            traceback.print_exc() 
             try:
                 log_event = {"event": "NotificationEmailSent", "runId": run_id, "status": "Exception", "error": str(email_ex)}
                 save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
             except Exception as log_email_e: print(f"Error logging EmailSent exception: {log_email_e}")
     else:
-        print(f"BG Run {run_id}: SendGrid client not available. Cannot send email notification.")
+        append_bg_log("SendGrid client not available. Cannot send email notification.")
 
-    print(f"Background Run {run_id}: Finished for {user_email}")
+    append_bg_log(f"Background task finished.")
+    # --- END: Complete Background Task Function (with Direct String Base64 Attachment) ---
+
 
 def save_section_hf_dataset(section_num: int, section_content: str, content_type: str, run_id: str, company_name: str, user_email: str):
     """Uploads an individual generated section's content to the private HF Dataset."""
@@ -510,41 +661,87 @@ def save_profile_hf_dataset(profile_content: str, content_type: str, run_id: str
         return None 
 
 # --- Authentication Backend ---
-
+# --- START: Revised send_auth_code function ---
 def send_auth_code(email, auth_state):
-    """Validates email, sends auth code via SendGrid, updates state, and sends JSON log email."""
+    """
+    Validates email against permitted list from dataset, sends code via SendGrid, 
+    logs events, and updates state.
+    """
+    # 1. Basic Email Format Check
     if not email or '@' not in email:
-        # Existing text output:
         return "Please enter a valid email address.", auth_state, gr.update(visible=True), gr.update(visible=False)
 
-    try:
-        domain = email.split('@')[1]
-        if domain.lower() != ALLOWED_DOMAIN.lower():
-            # Existing text output:
-            return f"Access denied. Only users from the '{ALLOWED_DOMAIN}' domain are permitted.", auth_state, gr.update(visible=True), gr.update(visible=False)
-    except IndexError:
-         # Existing text output:
-         return "Invalid email format.", auth_state, gr.update(visible=True), gr.update(visible=False)
+    # 2. Check Permission using Dataset File
+    print(f"Checking permissions for email: {email}")
+    email_lower = email.lower() # Use lowercase for all checks
+    is_permitted = False
+    
+    # Attempt to get the configuration from the dataset
+    permitted_users_config = get_permitted_users() # Assumes get_permitted_users() is defined above this
+    
+    if permitted_users_config:
+        allowed_emails = permitted_users_config.get("allowed_emails", [])
+        allowed_domains = permitted_users_config.get("allowed_domains", [])
+        
+        # Check specific email list first
+        if email_lower in allowed_emails:
+            is_permitted = True
+            print(f"Email {email} permitted via allowed_emails list.")
+        else:
+            # If not specific, check allowed domains
+            try:
+                domain = email_lower.split('@')[1]
+                if domain in allowed_domains:
+                    is_permitted = True
+                    print(f"Email {email} permitted via allowed_domains list ({domain}).")
+            except IndexError:
+                # Invalid format, already caught, but handles defensively
+                print(f"Invalid email format encountered during domain check: {email}")
+                is_permitted = False 
+    else:
+        # Fallback case if get_permitted_users failed critically (should be rare with its internal fallback)
+        print("CRITICAL ERROR: Could not retrieve or determine permitted users configuration.")
+        return "Error checking permissions. Please try again later.", auth_state, gr.update(visible=True), gr.update(visible=False)
 
+    # If permission check failed, deny access and log it
+    if not is_permitted:
+         print(f"Access denied for email: {email}")
+         # Log denial attempt
+         try:
+            log_event = {
+                "event": "AuthAttemptDenied", 
+                "reason": "Email/Domain not permitted",
+                "appVersion": APP_VERSION
+                }
+            save_log_entry_hf_dataset(user_email=email, event_data=log_event) # Assumes save_log_entry... defined
+         except Exception as log_denial_e: 
+             print(f"Error logging AuthAttemptDenied: {log_denial_e}")
+         
+         # Return generic denial message to user
+         return "Access denied. Your email address is not authorized for this application.", auth_state, gr.update(visible=True), gr.update(visible=False)
+
+    # 3. Proceed if Permitted: Check SendGrid Config
+    print(f"Email {email} is permitted. Checking SendGrid config...")
     if not SENDGRID_API_KEY or not sg:
         print("Warning: SendGrid not configured or failed to initialize. Using dummy code '1234'.")
         code = "1234"
         auth_state["email"] = email
         auth_state["code"] = code
         auth_state["code_sent"] = True # Mark as sent for testing flow
-        # Existing text output:
+        # Log dummy code usage
+        try:
+             log_event = {"event": "AuthCodeDummyUsed", "reason": "SendGrid not configured"}
+             save_log_entry_hf_dataset(user_email=email, event_data=log_event)
+        except Exception as log_dummy_e: print(f"Error logging AuthCodeDummyUsed: {log_dummy_e}")
         return "SendGrid not configured. For testing, use code 1234.", auth_state, gr.update(visible=False), gr.update(visible=True)
 
-    # # --- Define your tracking email address ---
-    # TRACKING_EMAIL = "ProfileDash.NoReply@gmail.com" 
-
-    # Generate User Code
+    # 4. Generate and Prepare Email (if SendGrid OK)
+    print(f"Generating auth code for {email}...")
     code = generate_auth_code()
     auth_state["email"] = email
     auth_state["code"] = code
-    auth_state["code_sent"] = False # Mark as not sent yet
+    auth_state["code_sent"] = False # Mark as not sent *yet*
 
-    # Prepare User Email
     subject = "Your ProfileDash Authentication Code"
     html_content = f"""
     <div style="font-family: sans-serif; padding: 20px; max-width: 400px; margin: auto; border: 1px solid #ddd; border-radius: 5px;">
@@ -558,6 +755,7 @@ def send_auth_code(email, auth_state):
         <p style="font-size: 10px; color: #aaa; text-align: center;">ProfileDash - Automated Company Profiling</p>
     </div>
     """
+    # Ensure Mail, Email, To, Content are imported
     user_message = Mail(
         from_email=Email(SENDER_EMAIL, "ProfileDash"),
         to_emails=To(email),
@@ -565,90 +763,58 @@ def send_auth_code(email, auth_state):
         html_content=Content("text/html", html_content)
     )
 
-    # --- Try sending the email to the USER first ---
+    # 5. Attempt to Send Email & Log Outcome
     try:
+        print(f"Attempting to send auth code email via SendGrid to {email}...")
         response = sg.client.mail.send.post(request_body=user_message.get())
+        
         if 200 <= response.status_code < 300:
             print(f"Auth code sent successfully to {email}. Status: {response.status_code}")
             auth_state["code_sent"] = True
-
-            # --- START: Inserted Code for Success Logging ---
+            # Log Success to Dataset
             try:
                 log_event = {
-                    "event": "AuthCodeSent",
-                    "status": "Success",
-                    "appVersion": APP_VERSION 
+                    "event": "AuthCodeSent", "status": "Success", "appVersion": APP_VERSION 
                 }
                 save_log_entry_hf_dataset(user_email=email, event_data=log_event)
             except Exception as dataset_log_e:
                 print(f"Non-critical error logging AuthCodeSent success to dataset: {dataset_log_e}")
-            # --- END: Inserted Code for Success Logging ---
+            # Return success message to user
+            return f"Authentication code sent to {email}. Enter code below and press Verify Code.", auth_state, gr.update(visible=False), gr.update(visible=True)
 
-            # User email sent successfully, proceed to log email attempt (existing code for tracking email)
-            # ... (The existing 'if auth_state["code_sent"] and TRACKING_EMAIL:' block follows here) ...
         else:
-            # Failed to send to user, report error and stop
+            # Log SendGrid Failure
             print(f"Failed to send auth code to {email}. Status: {response.status_code}, Body: {response.body}")
-
-            # --- START: Inserted Code for Failure Logging ---
             try:
                 log_event = {
-                    "event": "AuthCodeSendFailed",
-                    "status": "Failure",
+                    "event": "AuthCodeSendFailed", "status": "Failure",
                     "statusCode": response.status_code,
-                    "responseBody": str(response.body)[:500], # Limit response body size
+                    "responseBody": str(response.body)[:500], 
                     "appVersion": APP_VERSION
                 }
                 save_log_entry_hf_dataset(user_email=email, event_data=log_event)
             except Exception as dataset_log_e:
                 print(f"Non-critical error logging AuthCodeSendFailed to dataset: {dataset_log_e}")
-            # --- END: Inserted Code for Failure Logging ---
-
-            # Existing text output:
+            # Return error message to user
             return f"Error sending authentication code (Status: {response.status_code}). Try again later or contact support.", auth_state, gr.update(visible=True), gr.update(visible=False)
 
-        # response = sg.client.mail.send.post(request_body=user_message.get())
-        # if 200 <= response.status_code < 300:
-        #     print(f"Auth code sent successfully to {email}. Status: {response.status_code}")
-        #     auth_state["code_sent"] = True
-        #     # User email sent successfully, proceed to log email attempt
-        # else:
-            # Failed to send to user, report error and stop
-            # print(f"Failed to send auth code to {email}. Status: {response.status_code}, Body: {response.body}")
-            # # Existing text output:
-            # return f"Error sending authentication code (Status: {response.status_code}). Try again later or contact support.", auth_state, gr.update(visible=True), gr.update(visible=False)
-
-    # except Exception as e:
-    #     # Exception sending to user, report error and stop
-    #     print(f"Exception sending email to {email}: {e}")
-    #     traceback.print_exc()
-    #     # Existing text output:
-    #     return f"An error occurred while sending the email: {e}. Please try again.", auth_state, gr.update(visible=True), gr.update(visible=False)
-
     except Exception as e:
-        # Exception sending to user, report error and stop
+        # Log Exception during SendGrid call
         print(f"Exception sending email to {email}: {e}")
         traceback.print_exc()
-
-        # --- START: Inserted Code for Exception Logging ---
         try:
             log_event = {
-                "event": "AuthCodeSendException",
-                "status": "Exception",
-                "errorType": type(e).__name__,
-                "errorMessage": str(e),
+                "event": "AuthCodeSendException", "status": "Exception",
+                "errorType": type(e).__name__, "errorMessage": str(e),
                 "appVersion": APP_VERSION
             }
             save_log_entry_hf_dataset(user_email=email, event_data=log_event)
         except Exception as dataset_log_e:
             print(f"Non-critical error logging AuthCodeSendException to dataset: {dataset_log_e}")
-        # --- END: Inserted Code for Exception Logging ---
+        # Return error message to user
+        return f"An error occurred while attempting to send the authentication email: {e}. Please try again.", auth_state, gr.update(visible=True), gr.update(visible=False)
 
-        # Existing text output:
-        return f"An error occurred while sending the email: {e}. Please try again.", auth_state, gr.update(visible=True), gr.update(visible=False)
-
-    return f"Authentication code sent to {email}. Enter code below and press Verify Code.", auth_state, gr.update(visible=False), gr.update(visible=True)
-
+# --- END: Revised send_auth_code function ---
 
 def verify_auth_code(entered_code, auth_state):
     """Verifies the entered code against the stored code."""
@@ -739,373 +905,7 @@ def handle_generate_click(file_paths, auth_state):
         traceback.print_exc()
         return f"Error: Could not start generation process. {thread_e}", None, gr.update(visible=False)
     
-# --- Main Gradio Processing Function (Revised outputs) ---
-# --- START: Complete Background Task Function ---
-def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, temp_file_paths: list):
-    """
-    Performs the entire profile generation in a background thread, 
-    saves results to dataset, and emails user upon completion or failure.
-    NOTE: This function runs in a separate thread and CANNOT directly 
-          update Gradio components using 'yield'. It interacts via dataset logs/files 
-          and prints status to server logs.
-    """
-    start_run_time = time.time()
-    print(f"BG Run {run_id}: Started for {user_email}")
-    
-    # --- Function-local Helper for Background Logging ---
-    background_log_internal = [] # Keep internal track if needed, primarily use print
-    def get_run_elapsed():
-        """Calculates elapsed time for logging within this thread."""
-        elapsed = time.time() - start_run_time
-        minutes = int(elapsed // 60)
-        seconds = int(elapsed % 60)
-        return f"[{minutes}'{seconds:02d}\"]"
 
-    def append_bg_log(message):
-        """Logs message to server console with timestamp and run ID."""
-        timestamped_message = f"{get_run_elapsed()} {message}"
-        background_log_internal.insert(0, timestamped_message) # Optional internal list
-        print(f"BG Run {run_id}: {timestamped_message}") 
-        # Optional: Log progress update to dataset (can be verbose)
-        # try:
-        #    save_log_entry_hf_dataset(user_email, {"event": "ProgressUpdate", "runId": run_id, "detail": message})
-        # except Exception as prog_log_e: print(f"BG Run {run_id}: Error logging progress update: {prog_log_e}")
-    # --- End of Local Helper ---
-
-    # Initialize status flags and variables for this run
-    section_processing_error = False
-    error_message_for_email = None
-    final_profile_saved_to_dataset = False
-    final_profile_repo_path = None 
-    error_message_for_email = None 
-    company_name = "Unknown_Company" # Default
-    timestamp_for_filename = time.strftime('%Y%m%d_%H%M%S') # Timestamp for final filename if needed
-
-    try:
-        # --- 1. Configure Google AI (Essential in thread) ---
-        append_bg_log("Configuring Google AI SDK...")
-        if not api_key:
-            raise ValueError("ERROR: API Key was not provided to the background task.")
-        try:
-            genai.configure(api_key=api_key)
-            # Minimal test call (optional - uncomment if needed, ensure model exists)
-            # test_model = genai.GenerativeModel("gemini-1.5-flash") 
-            # _ = test_model.generate_content("test: say ok") 
-            append_bg_log("Google AI SDK Configured OK.")
-        except Exception as config_e:
-             error_msg = f"CRITICAL ERROR configuring Google AI SDK: {type(config_e).__name__} - {str(config_e)}"
-             append_bg_log(error_msg)
-             raise RuntimeError(error_msg) from config_e
-
-        # --- 2. Process Uploaded Documents (Adapted from original) ---
-        append_bg_log("Processing uploaded documents...")
-        if not temp_file_paths: 
-            raise ValueError("No file paths provided to background task.")
-            
-        # Ensure it's a list
-        if not isinstance(temp_file_paths, list): 
-            temp_file_paths = [temp_file_paths]
-            
-        uploaded_data = {}
-        total_size = 0
-        valid_files_count = 0
-
-        for file_path in temp_file_paths:
-            if file_path is None: 
-                append_bg_log("Warning: Invalid file input (None). Skipping.")
-                continue
-            filename = os.path.basename(file_path)
-            try:
-                # Check existence *again* as temp files can vanish
-                if not os.path.exists(file_path): 
-                    append_bg_log(f"Warning: Temp file path not found: {file_path}. Skipping.")
-                    continue
-                if not filename.lower().endswith(".pdf"):
-                    append_bg_log(f"Warning: Skipping non-PDF: {filename}")
-                    continue
-                file_size = os.path.getsize(file_path)
-                if file_size == 0:
-                    append_bg_log(f"Warning: File '{filename}' is empty. Skipping.")
-                    continue
-                
-                total_size += file_size
-                with open(file_path, 'rb') as f:
-                    uploaded_data[filename] = f.read() # Read content into memory
-                valid_files_count += 1
-                append_bg_log(f"Read: {filename} ({file_size // 1024} KB)")
-            except Exception as read_err:
-                 append_bg_log(f"Error reading '{filename}': {read_err}")
-                 # Decide if one read error should stop the whole process - perhaps not
-                 # section_processing_error = True # Mark potential issue
-                 continue # Skip this file
-
-        # Check if any valid files were actually read
-        if not uploaded_data: 
-            raise ValueError("No valid PDF files were read or processed.")
-            
-        # Check total size against limits
-        if total_size > MAX_UPLOAD_BYTES: 
-            raise ValueError(f"Upload failed: Total size ({total_size / (1024*1024):.2f} MB) exceeds {MAX_UPLOAD_MB} MB limit.")
-
-        append_bg_log(f"Encoding {valid_files_count} files for API (base64)...")
-        # Assume load_document_content takes the dict of {filename: bytes}
-        documents_for_api = load_document_content(uploaded_data) 
-        if not documents_for_api: 
-            raise ValueError("Failed to process documents (base64 conversion).")
-            
-        # Determine Company Name (using the same logic as original)
-        first_filename = next(iter(uploaded_data.keys())) # Get first filename
-        company_name = os.path.splitext(first_filename)[0].replace('_', ' ')
-        append_bg_log(f"Company: {company_name}. Starting parallel generation...")
-        
-        # --- Optional: Clean up temporary files ---
-        # Uncomment if you are sure the main thread doesn't need them and 
-        # you want explicit cleanup within the thread.
-        # append_bg_log("Cleaning up temporary upload files...")
-        # for file_path in temp_file_paths:
-        #     try:
-        #         if file_path and os.path.exists(file_path):
-        #             os.remove(file_path)
-        #     except Exception as cleanup_e:
-        #         append_bg_log(f"Warning - could not clean up temp file {file_path}: {cleanup_e}")
-        # --- End Optional Cleanup ---
-
-        # --- 3. Generate Sections in Parallel (Adapted) ---
-        total_sections = len(sections)
-        initial_results = {} # Stores generated content (HTML string or error HTML)
-        completed_sections_count = 0 # Track progress for logging
-        
-        append_bg_log(f"Creating Gemini model instance for section generation...")
-        insight_model = create_insight_model() 
-        if not insight_model: 
-            raise RuntimeError("Failed to create insight model in background thread.")
-        append_bg_log("Model instance created. Submitting tasks...")
-
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_to_section = {
-                executor.submit(generate_initial_section, section, documents_for_api, persona, analysis_specs, output_format, insight_model): section
-                for section in sections
-            }
-            
-            append_bg_log(f"Tasks submitted. Waiting for completion...")
-            for future in as_completed(future_to_section):
-                section_def = future_to_section[future]
-                section_num = section_def["number"]; section_title = section_def["title"]
-                s_num_result, content_result = section_num, None # Defaults
-                
-                try:
-                    # Get the result from the generation function
-                    s_num_result, content_result = future.result() 
-                    
-                    # Basic check for error indicators within the returned content
-                    if not content_result or '<p class="error">' in str(content_result): # Check if error string is present
-                        append_bg_log(f"PARTIAL FAIL: Section {s_num_result} ('{section_title}') generation reported error.")
-                        section_processing_error = True
-                        if not content_result: # Handle completely empty return
-                            content_result = f'<div class="section" id="section-{s_num_result}"><h2>{s_num_result}. {section_title}</h2><p class="error">ERROR: Generation function returned empty content.</p></div>'
-                    else:
-                        append_bg_log(f"SUCCESS: Section {s_num_result} ('{section_title}') generated.")
-                    
-                    # Store the result (HTML or error HTML string)
-                    initial_results[s_num_result] = content_result
-
-                except Exception as e:
-                    # Handle exceptions *during* the execution of generate_initial_section
-                    append_bg_log(f"FAIL: Section {section_num} ('{section_title}') hit exception - {type(e).__name__}: {e}")
-                    # traceback.print_exc() # Uncomment for detailed debugging if needed
-                    error_content_html = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">ERROR: Generation process failed unexpectedly: {e}</p></div>'
-                    initial_results[section_num] = error_content_html
-                    content_result = error_content_html # Use error content for saving
-                    section_processing_error = True
-                
-                # --- Save Section to Dataset (Success or Error Stub) ---
-                try:
-                    if content_result: # Save whatever content we have (success HTML or error HTML)
-                         save_section_hf_dataset(
-                             section_num=s_num_result, # Use result number if available, else loop number
-                             section_content=str(content_result), # Ensure it's a string
-                             content_type="html", # Hardcoded HTML for now
-                             run_id=run_id,       
-                             company_name=company_name, 
-                             user_email=user_email 
-                         )
-                         # Function prints its own success/error messages
-                    else:
-                         # This case should be rare now due to error HTML generation above
-                         append_bg_log(f"Warning: Skipping dataset save for truly empty section {s_num_result}")
-                except Exception as section_save_e:
-                     append_bg_log(f"Non-critical error during save attempt for section {s_num_result}: {section_save_e}")
-                
-                # --- Update internal progress log ---
-                completed_sections_count += 1
-                progress_percent = int((completed_sections_count / total_sections) * 100)
-                append_bg_log(f"Progress: {completed_sections_count}/{total_sections} ({progress_percent}%) sections processed.")
-
-        append_bg_log("All sections processed. Aggregating final profile...")
-
-        # --- 4. Aggregate and Save Final Profile (Adapted) ---
-        ordered_initial_contents = []
-        for section_def in sorted(sections, key=lambda x: x["number"]):
-            content = initial_results.get(section_def["number"], 
-                                          f'<div class="section" id="section-{section_def["number"]}"><h2>{section_def["number"]}. {section_def["title"]}</h2><p class="error">ERROR: Content missing during final aggregation.</p></div>')
-            ordered_initial_contents.append(str(content)) # Ensure string
-        
-        final_html = generate_full_html_profile(company_name, sections, ordered_initial_contents, APP_VERSION)
-
-        if final_html and isinstance(final_html, str):
-            append_bg_log("Final HTML generated. Saving to dataset...")
-            saved_repo_path = save_profile_hf_dataset(
-                profile_content=final_html, content_type="html", run_id=run_id, 
-                company_name=company_name, user_email=user_email
-            )
-            if saved_repo_path:
-                final_profile_saved_to_dataset = True
-                final_profile_repo_path = saved_repo_path # Store for email link
-                append_bg_log(f"Final profile saved successfully to dataset: {saved_repo_path}")
-            else:
-                append_bg_log("Warning: Failed to save final profile to dataset.")
-                error_message_for_email = "Profile generated but failed to save archive to dataset." # Set error for email
-                # This is considered a failure state for the run completion log
-        else:
-            append_bg_log("Error: Final HTML generation failed or produced empty content.")
-            raise ValueError("Final HTML generation failed, cannot save profile.") # Raise to trigger failure email
-
-    except Exception as generation_e:
-        # Catch errors from any stage within the main try block
-        print(f"BG Run {run_id}: CRITICAL ERROR during generation pipeline: {generation_e}")
-        traceback.print_exc() # Log full traceback to server logs
-        section_processing_error = True # Mark as error
-        error_message_for_email = f"Profile generation failed: {type(generation_e).__name__} - {str(generation_e)}"
-        
-        # Log RunFailed if a critical error occurred
-        try:
-             log_event = {"event": "RunFailed", "runId": run_id, "status": "Exception", 
-                          "errorStage": "BackgroundGenerationPipeline", "errorType": type(generation_e).__name__,
-                          "errorMessage": str(generation_e)}
-             save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
-        except Exception as log_fail_e: print(f"Error logging RunFailed after main exception: {log_fail_e}")
-
-    # --- 5. Send Email Notification ---
-    # This block executes regardless of success/failure in the try block above
-    append_bg_log("Preparing email notification...")
-    email_subject = ""
-    email_html_content = ""
-    
-    # Check flags set during the try block to determine outcome
-    generation_succeeded_fully = not section_processing_error and final_profile_saved_to_dataset
-    generation_failed_critically = error_message_for_email is not None # Check if a critical error was caught
-
-    if generation_succeeded_fully:
-        # --- SUCCESS EMAIL ---
-        status_string = "completed successfully"
-        email_subject = f"ProfileDash: Profile for {company_name} is Ready"
-        if final_profile_repo_path:
-            file_url = f"https://huggingface.co/datasets/{DATASET_REPO_ID}/blob/main/{final_profile_repo_path}"
-            email_html_content = f"""
-            <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p>
-            <p>You can view the generated profile in the private dataset (requires Hugging Face login):</p>
-            <p><a href="{file_url}" target="_blank">View Profile: {os.path.basename(final_profile_repo_path)}</a></p>
-            <p>(Run ID: {run_id})</p>
-            <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
-            """
-        else: # Fallback if path missing but somehow marked success (shouldn't happen often)
-             dataset_folder_url = f"https://huggingface.co/datasets/{DATASET_REPO_ID}/tree/main/profiles/{user_email.replace('@','_at_').replace('.', '_')}/{run_id}"
-             email_html_content = f"""
-             <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}, but the final file link could not be determined.</p>
-             <p>You can check the output folder in the private dataset (requires Hugging Face login):</p>
-             <p><a href="{dataset_folder_url}" target="_blank">View Run Folder</a></p>
-             <p>(Run ID: {run_id})</p>
-             <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
-             """
-        # Log RunCompleted only on full success
-        try:
-             log_event = {"event": "RunCompleted", "runId": run_id, "status": "Success",
-                          "finalProfileSaved": final_profile_saved_to_dataset,
-                          "sectionProcessingErrorEncountered": section_processing_error}
-             save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
-        except Exception as log_complete_e: print(f"Error logging RunCompleted: {log_complete_e}")
-
-    elif section_processing_error and not generation_failed_critically:
-         # --- PARTIAL SUCCESS / COMPLETED WITH ERRORS EMAIL ---
-         status_string = "completed with some errors during section generation"
-         email_subject = f"ProfileDash: Profile for {company_name} Completed (with errors)"
-         # Link to folder is safer here as final file might be inconsistent
-         dataset_folder_url = f"https://huggingface.co/datasets/{DATASET_REPO_ID}/tree/main/profiles/{user_email.replace('@','_at_').replace('.', '_')}/{run_id}"
-         email_html_content = f"""
-         <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p>
-         <p>Some sections may contain errors or be incomplete. Please review the output carefully.</p>
-         <p>You can view the generated files in the private dataset (requires Hugging Face login):</p>
-         <p><a href="{dataset_folder_url}" target="_blank">View Run Folder</a></p>
-         <p>(Run ID: {run_id})</p>
-         <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
-         """
-         # Log RunCompleted with Error status
-         try:
-             log_event = {"event": "RunCompleted", "runId": run_id, "status": "CompletedWithErrors",
-                          "finalProfileSaved": final_profile_saved_to_dataset, # May or may not have saved
-                          "sectionProcessingErrorEncountered": section_processing_error}
-             save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
-         except Exception as log_complete_e: print(f"Error logging RunCompletedWithErrors: {log_complete_e}")
-    
-    else:
-        # --- FAILURE EMAIL ---
-        email_subject = f"ProfileDash: Profile Generation Failed for {company_name}"
-        # error_message_for_email should have been set in the main except block
-        error_details = error_message_for_email if error_message_for_email else 'An unspecified critical error occurred.'
-        email_html_content = f"""
-        <p>Unfortunately, the ProfileDash profile generation for <strong>{company_name}</strong> failed.</p>
-        <p>Error details: {error_details}</p>
-        <p>Please check the logs or contact support if the issue persists.</p>
-        <p>(Run ID: {run_id})</p>
-        <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
-        """
-        # RunFailed log was already attempted in the except block
-
-    # Send the email using SendGrid client (sg)
-    if sg: # Check if SendGrid client is available
-        try:
-            message = Mail(
-                from_email=Email(SENDER_EMAIL, "ProfileDash Notification"),
-                to_emails=To(user_email),
-                subject=email_subject,
-                html_content=Content("text/html", email_html_content)
-            )
-            response = sg.client.mail.send.post(request_body=message.get())
-            log_email_event_type = "NotificationEmailSent"
-            email_log_status = "Unknown"
-            email_outcome = "Unknown"
-            status_code = None
-
-            if 200 <= response.status_code < 300:
-                append_bg_log(f"Notification email sent successfully to {user_email}.")
-                email_log_status = "Success"
-                email_outcome = "Completed" if generation_succeeded_fully else ("CompletedWithErrors" if section_processing_error else "Failed")
-            else:
-                append_bg_log(f"Failed to send notification email to {user_email}. Status: {response.status_code}")
-                email_log_status = "Failure"
-                status_code = response.status_code
-                email_outcome = "Completed" if generation_succeeded_fully else ("CompletedWithErrors" if section_processing_error else "Failed")
-            
-            # Log EmailSent status
-            try:
-                log_event = {"event": log_email_event_type, "runId": run_id, "status": email_log_status, "outcome": email_outcome}
-                if status_code: log_event["statusCode"] = status_code
-                save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
-            except Exception as log_email_e: print(f"Error logging {log_email_event_type} {email_log_status}: {log_email_e}")
-
-        except Exception as email_ex:
-            append_bg_log(f"Exception sending notification email: {email_ex}")
-            # Log EmailSent exception
-            try:
-                log_event = {"event": "NotificationEmailSent", "runId": run_id, "status": "Exception", "error": str(email_ex)}
-                save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
-            except Exception as log_email_e: print(f"Error logging EmailSent exception: {log_email_e}")
-    else:
-        append_bg_log("SendGrid client not available. Cannot send email notification.")
-
-    append_bg_log(f"Background task finished.")
-    # --- End of function ---
-# --- END: Complete Background Task Function ---
 # --- Build the Gradio Blocks Interface (REVISED - No HTML Preview) ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
@@ -1135,7 +935,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     with gr.Column(visible=True) as auth_section:
         auth_status = gr.Textbox(label="Authentication Status", value="Enter your email address below, then press Send Code", interactive=False)
         with gr.Row(visible=True) as email_input_row:
-            email_input = gr.Textbox(label="Enter Your Email", placeholder=f"your.email@{ALLOWED_DOMAIN}")
+            email_input = gr.Textbox(label="Enter Your Email", placeholder=f"your.email@domain.com")
             send_code_button = gr.Button("Send Code")
         with gr.Row(visible=False) as code_input_row:
             code_input = gr.Textbox(label="Enter 4-Digit Code")
@@ -1175,7 +975,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 )
                 reset_button = gr.Button("Produce New Profile", visible=False)
 
-        generate_button = gr.Button("Generate Profile & Download", variant="primary")
+        generate_button = gr.Button("Generate Profile", variant="primary")
 
         # --- NO HTML Preview Component or CSS block here ---
 
