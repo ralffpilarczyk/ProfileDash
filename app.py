@@ -17,9 +17,11 @@ from sendgrid.helpers.mail import (
     Mail, Email, To, Content, Attachment, FileContent, FileName,
     FileType, Disposition
 )
+from src.section_definitions import sections
+from src.section_processor import generate_initial_section
 
 # --- Variables ---
-APP_VERSION = "v1.0.4"
+APP_VERSION = "v1.0.5"
 LOG_FILE = "user_log.json"
 DATASET_REPO_ID = "ralfpilarczyk/ProfileDashData" 
 PERMITTED_USERS_FILE = "permitted_users.json"
@@ -50,10 +52,8 @@ try:
     from src.html_generator import generate_full_html_profile
     # Initial section generation logic (accepting model instance)
     from src.section_processor import generate_initial_section
-    # Section definitions (ensure this file exists in src)
-    from src.section_definitions import sections
     # Prompts
-    from src.prompts import persona, analysis_specs, output_format
+    from src.prompts import persona, analysis_specs, json_output_format
     # API client functions (will be configured dynamically)
     from src.api_client import create_insight_model
 
@@ -246,8 +246,8 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
     final_profile_saved_to_dataset = False
     final_profile_repo_path = None 
     company_name = "Unknown_Company" 
-    timestamp_for_filename = time.strftime('%Y%m%d_%H%M%S') 
-    final_html = "" # Initialize final_html
+    timestamp_for_filename = time.strftime('%Y%m%d_%H%M%S')
+    final_json_profile = None # Initialize final_json_profile instead of final_html
 
     try:
         # --- 1. Configure Google AI ---
@@ -328,7 +328,7 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             future_to_section = {
-                executor.submit(generate_initial_section, section, documents_for_api, persona, analysis_specs, output_format, insight_model): section
+                executor.submit(generate_initial_section, section, documents_for_api, persona, analysis_specs, json_output_format, insight_model): section
                 for section in sections
             }
             
@@ -340,18 +340,28 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
                 
                 try:
                     s_num_result, content_result = future.result() 
-                    if not content_result or '<p class="error">' in str(content_result):
+                    # Check for error in JSON result
+                    if not content_result or (isinstance(content_result, dict) and 'error' in content_result):
                         append_bg_log(f"PARTIAL FAIL: Section {s_num_result} ('{section_title}') generation reported error.")
                         section_processing_error = True
-                        if not content_result: content_result = f'<div class="section" id="section-{s_num_result}"><h2>{s_num_result}. {section_title}</h2><p class="error">ERROR: Generation function returned empty content.</p></div>'
+                        if not content_result:
+                            content_result = {
+                                "error": "Generation function returned empty content",
+                                "section_num": s_num_result,
+                                "section_title": section_title
+                            }
                     else:
                         append_bg_log(f"SUCCESS: Section {s_num_result} ('{section_title}') generated.")
                     initial_results[s_num_result] = content_result
                 except Exception as e:
                     append_bg_log(f"FAIL: Section {section_num} ('{section_title}') hit exception - {type(e).__name__}: {e}")
-                    error_content_html = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">ERROR: Generation process failed unexpectedly: {e}</p></div>'
-                    initial_results[section_num] = error_content_html
-                    content_result = error_content_html 
+                    error_content_json = {
+                        "error": f"Generation process failed unexpectedly: {e}",
+                        "section_num": section_num,
+                        "section_title": section_title
+                    }
+                    initial_results[section_num] = error_content_json
+                    content_result = error_content_json
                     section_processing_error = True
                 
                 # Save Section to Dataset
@@ -359,8 +369,8 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
                     if content_result:
                          save_section_hf_dataset(
                              section_num=s_num_result, 
-                             section_content=str(content_result), 
-                             content_type="html", 
+                             section_content=json.dumps(content_result, indent=2), 
+                             content_type="json", 
                              run_id=run_id, company_name=company_name, user_email=user_email 
                          )
                     else:
@@ -374,22 +384,41 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
 
         append_bg_log("All sections processed. Aggregating final profile...")
 
-        # --- 4. Aggregate and Save Final Profile ---
-        ordered_initial_contents = []
-        for section_def in sorted(sections, key=lambda x: x["number"]):
-            content = initial_results.get(section_def["number"], 
-                                          f'<div class="section" id="section-{section_def["number"]}"><h2>{section_def["number"]}. {section_def["title"]}</h2><p class="error">ERROR: Content missing during final aggregation.</p></div>')
-            ordered_initial_contents.append(str(content))
+        # --- 4. Aggregate JSON Profile Data ---
+        successful_sections_json = {}
+        failed_sections_info = {}
         
-        # ** Generate final_html string **
-        final_html = generate_full_html_profile(company_name, sections, ordered_initial_contents, APP_VERSION)
+        for sec_num, result_obj in initial_results.items():
+            # Check if the result is likely a valid JSON object (not an error dict)
+            if isinstance(result_obj, dict) and 'error' not in result_obj:
+                successful_sections_json[str(sec_num)] = result_obj
+            else:
+                failed_sections_info[str(sec_num)] = result_obj # Store the error object/info
+        
+        final_json_profile = {
+            "profile_metadata": {
+                "run_id": run_id,
+                "user_email": user_email,
+                "company_name": company_name,
+                "generation_timestamp": datetime.now().isoformat(),
+                "app_version": APP_VERSION,
+                "input_files": [os.path.basename(fp) for fp in temp_file_paths if fp],
+                "generation_status": "Completed" if not failed_sections_info else "CompletedWithErrors",
+                "failed_sections_count": len(failed_sections_info)
+            },
+            "sections": successful_sections_json,
+            "errors": failed_sections_info
+        }
 
-        if final_html and isinstance(final_html, str):
-            append_bg_log("Final HTML generated. Saving to dataset...")
-            # ** Save final_html to dataset **
+        if final_json_profile:
+            append_bg_log("Final JSON profile generated. Saving to dataset...")
+            # Save final_json_profile to dataset
             saved_repo_path = save_profile_hf_dataset(
-                profile_content=final_html, content_type="html", run_id=run_id, 
-                company_name=company_name, user_email=user_email
+                profile_content=json.dumps(final_json_profile, indent=2), 
+                content_type="json", 
+                run_id=run_id, 
+                company_name=company_name, 
+                user_email=user_email
             )
             if saved_repo_path:
                 final_profile_saved_to_dataset = True
@@ -401,8 +430,8 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
                     error_message_for_email = "Profile generated but failed to save archive to dataset."
                 final_profile_saved_to_dataset = False
         else:
-            append_bg_log("Error: Final HTML generation failed or produced empty content.")
-            raise ValueError("Final HTML generation failed, cannot save profile.") 
+            append_bg_log("Error: Final JSON profile generation failed or produced empty content.")
+            raise ValueError("Final JSON profile generation failed, cannot save profile.") 
 
     except Exception as generation_e:
         # Catch errors from any stage within the main try block
@@ -432,30 +461,31 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
 
     # --- Compose Email Based on Outcome ---
     if generation_succeeded_fully:
-        # --- SUCCESS: Encode final_html directly and attach ---
+        # --- SUCCESS: Encode final_json_profile directly and attach ---
         status_string = "completed successfully"
         email_subject = f"ProfileDash: Profile for {company_name} is Ready"
 
-        # Use the final_html string generated earlier AND final_profile_repo_path for filename
-        if final_html and isinstance(final_html, str) and final_profile_repo_path: 
+        # Use the final_json_profile and final_profile_repo_path for filename
+        if final_json_profile and final_profile_repo_path: 
             try:
-                append_bg_log("Encoding HTML content to Base64 for attachment...")
+                append_bg_log("Encoding JSON content to Base64 for attachment...")
                 
-                # *** Encode the final_html string directly to Base64 ***
-                encoded_content = base64.b64encode(final_html.encode('utf-8')).decode('ascii')
+                # Convert final_json_profile to string and encode to Base64
+                json_content = json.dumps(final_json_profile, indent=2)
+                encoded_content = base64.b64encode(json_content.encode('utf-8')).decode('ascii')
                 
                 append_bg_log("Base64 encoding complete. Creating attachment object...")
                 
                 # Construct a filename for the attachment
                 attachment_filename = os.path.basename(final_profile_repo_path) 
-                if not attachment_filename.lower().endswith('.html'):
-                    attachment_filename += ".html"
+                if not attachment_filename.lower().endswith('.json'):
+                    attachment_filename += ".json"
 
                 # Create the SendGrid Attachment object using encoded content
                 attachment_object = Attachment(
                     FileContent(encoded_content), # Base64 encoded string
                     FileName(attachment_filename),
-                    FileType('text/html'),
+                    FileType('application/json'),
                     Disposition('attachment')
                 )
                 append_bg_log("Attachment object created successfully.")
@@ -463,7 +493,7 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
                 # Set success email body mentioning attachment
                 email_html_content = f"""
                 <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p>
-                <p>The generated profile is attached to this email.</p>
+                <p>The generated profile is attached to this email as a JSON file.</p>
                 <p>(Run ID: {run_id})</p>
                 <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
                 """
@@ -479,8 +509,8 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
                 <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
                 """
         else:
-            # Case where final_html was empty/invalid or final profile wasn't saved
-            append_bg_log("Final HTML content or repo path not available, cannot attach. Sending note.")
+            # Case where final_json_profile was empty/invalid or final profile wasn't saved
+            append_bg_log("Final JSON content or repo path not available, cannot attach. Sending note.")
             email_html_content = f"""
             <p>Your ProfileDash profile generation for <strong>{company_name}</strong> completed, but the final profile could not be located or generated correctly for attachment.</p>
             <p>Please try generating the profile again or contact support.</p> 
@@ -907,7 +937,38 @@ def handle_generate_click(file_paths, auth_state):
     
 
 # --- Build the Gradio Blocks Interface (REVISED - No HTML Preview) ---
-with gr.Blocks(theme=gr.themes.Soft()) as demo:
+with gr.Blocks(theme=gr.themes.Soft(), css="""
+    /* Change purple to blue */
+    .gradio-container {
+        max-width: 600px !important; /* Shrink width to approximately half */
+        margin-left: auto;
+        margin-right: auto;
+    }
+    /* Target any purple backgrounds or text */
+    [data-testid="block-title"] {
+        color: #2c7fb8 !important;
+    }
+    .dark [data-testid="block-title"] {
+        color: #5aaaff !important;
+    }
+    .gradio-button.primary {
+        background-color: #2c7fb8 !important;
+    }
+    .dark .gradio-button.primary {
+        background-color: #5aaaff !important;
+    }
+    /* Change any other purple UI elements to blue */
+    .gr-panel.gr-panel--highlight {
+        background-color: rgba(44, 127, 184, 0.1) !important;
+    }
+    .dark .gr-panel.gr-panel--highlight {
+        background-color: rgba(90, 170, 255, 0.1) !important;
+    }
+    /* Make sure inputs are legible despite reduced width */
+    .gradio-textbox textarea, .gradio-textbox input {
+        width: 100% !important;
+    }
+""") as demo:
 
     # --- State Variables ---
     auth_state = gr.State({
@@ -934,10 +995,10 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     # --- 2. Authentication ---
     with gr.Column(visible=True) as auth_section:
         auth_status = gr.Textbox(label="Authentication Status", value="Enter your email address below, then press Send Code", interactive=False)
-        with gr.Row(visible=True) as email_input_row:
+        with gr.Column(visible=True) as email_input_row:
             email_input = gr.Textbox(label="Enter Your Email", placeholder=f"your.email@domain.com")
             send_code_button = gr.Button("Send Code")
-        with gr.Row(visible=False) as code_input_row:
+        with gr.Column(visible=False) as code_input_row:
             code_input = gr.Textbox(label="Enter 4-Digit Code")
             verify_code_button = gr.Button("Verify Code")
 
@@ -986,53 +1047,10 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     verify_code_button.click(fn=verify_auth_code, inputs=[code_input, auth_state], outputs=[auth_status, auth_state, auth_section, code_input_row, api_key_section])
     submit_api_key_button.click(fn=handle_api_key, inputs=[api_key_input, auth_state], outputs=[auth_status, auth_state, api_key_section, main_app_section, intro_section])
 
-    # # Generate Button Click (REVISED Outputs and .then() for JS)
-    # generate_button.click(
-    #     fn=run_initial_generation,
-    #     inputs=[pdf_upload, auth_state],
-    #     # Outputs: Status Textbox, Hidden File Component, Reset Button Visibility
-    #     outputs=[status_output, download_output, reset_button],
-    #     show_progress="hidden" # Use the explicit progress bar component
-    # ).then( # Execute JS AFTER python function finishes and updates download_output
-    #     fn=None, # No python function needed here
-    #     inputs=None,
-    #     outputs=None,
-    #     # JavaScript to find the hidden download link and click it
-    #     js="""
-    #     () => {
-    #       // Wait briefly for Gradio to update the hidden File component's value (the temp file path)
-    #       setTimeout(() => {
-    #         console.log("JS: Attempting to trigger download...");
-    #         // Find the hidden wrapper div for the gr.File component using its elem_id
-    #         const fileWrapper = document.getElementById('download-trigger-file');
-    #         if (fileWrapper) {
-    #           // Find the actual download anchor (<a>) tag within the wrapper.
-    #           // Gradio usually structures it like this, but inspect element if needed.
-    #           const downloadLink = fileWrapper.querySelector('a[download]');
-    #           if (downloadLink && downloadLink.href && !downloadLink.href.endsWith('#') && downloadLink.href.includes('/file=')) {
-    #             // Check if href is valid (not just '#' or empty, contains '/file=')
-    #             console.log('JS: Found valid download link:', downloadLink.href);
-    #             try {
-    #                 // Trigger the click event on the link
-    #                 downloadLink.click();
-    #                 console.log('JS: Download click triggered.');
-    #             } catch (e) {
-    #                 console.error('JS: Error triggering download click:', e);
-    #                 alert('Error: Failed to automatically trigger the file download. Check browser console.');
-    #             }
-    #           } else {
-    #             console.error('JS: Download link (<a> tag with valid href) not found within #download-trigger-file. Auto-download failed.');
-    #             // Optional: Alert user if link is missing/invalid after generation completes
-    #             // alert('Error: Could not find the download link element. Auto-download failed.');
-    #           }
-    #         } else {
-    #           console.error('JS: Download trigger component (#download-trigger-file) not found. Auto-download failed.');
-    #           // alert('Error: Could not find the download component. Auto-download failed.');
-    #         }
-    #       }, 500); // 500ms delay seems reasonable, adjust if downloads fail occasionally
-    #     }
-    #     """
-    # )
+    # Add Enter key functionality 
+    email_input.submit(fn=send_auth_code, inputs=[email_input, auth_state], outputs=[auth_status, auth_state, email_input_row, code_input_row])
+    code_input.submit(fn=verify_auth_code, inputs=[code_input, auth_state], outputs=[auth_status, auth_state, auth_section, code_input_row, api_key_section])
+    api_key_input.submit(fn=handle_api_key, inputs=[api_key_input, auth_state], outputs=[auth_status, auth_state, api_key_section, main_app_section, intro_section])
 
     # Generate Button Click (Now triggers background task)
     generate_button.click(

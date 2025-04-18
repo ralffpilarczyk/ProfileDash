@@ -5,6 +5,7 @@ sendgrid>=6.9.0
 cachetools>=5.0.0
 requests>=2.25.0
 huggingface_hub>=0.20
+jsonschema>=4.0.0
 
 # gradio
 # annotated-types==0.7.0

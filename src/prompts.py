@@ -33,64 +33,15 @@ analysis_specs = """
 """
 
 # Output format
-output_format = """
-Use HTML formatting STRICTLY as follows:
-
-<format_instructions>
-
-1.  **Main Section Wrapper:**
-    *   EVERY section's entire output MUST start exactly with `<div class="section" id="section-{section_number}">` (replace `{section_number}` with the actual number).
-    *   EVERY section's entire output MUST end exactly with `</div>`. No characters or whitespace should follow the final closing div tag.
-
-2.  **Section Header:**
-    *   Immediately after the opening `div` tag, include the section header: `<h2>{section_number}. {section_title}</h2>` (replace variables).
-
-3.  **Content Structure:**
-    *   Use `<p>` tags for paragraphs.
-    *   Use `<h3>`, `<h4>`, etc., for subsections IF appropriate for structure, nested correctly within the main `div`.
-    *   Use `<ul>` or `<ol>` for lists, with `<li>` for each item. All `<li>` tags MUST be inside a `<ul>` or `<ol>`.
-    *   Use `<strong>` for emphasis where appropriate, do NOT use `<b>`.
-    *   Use `<br/>` for single line breaks (ensure self-closing).
-
-4.  **Tables:**
-    *   Use this EXACT structure for all tables:
-        ```html
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Header 1 (Unit/Year)</th>
-              <th>Header 2 (Unit/Year)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Data A1</td>
-              <td>Data A2</td>
-            </tr>
-            <tr>
-              <td>Data B1</td>
-              <td>Data B2</td>
-            </tr>
-          </tbody>
-        </table>
-        ```
-    *   Tables MUST have `<thead>` and `<tbody>`.
-    *   Header cells MUST use `<th>` within `<thead>`.
-    *   Data cells MUST use `<td>` within `<tbody>`.
-    *   All `<td>` or `<th>` MUST be inside a `<tr>`.
-    *   All `<tr>` MUST be inside `<thead>` or `<tbody>`.
-
-5.  **Quotes (Use Sparingly):**
-    *   For short, direct quotes: `"Verbatim quote text [Source: DocName, Page X]."`.
-    *   For longer quotes: `<blockquote>Verbatim quote text.<cite>[Source: DocName, Page X]</cite></blockquote>`.
-
-6.  **CRITICAL HTML RULES:**
-    *   **Validity:** Produce valid HTML. Every opening tag must have a corresponding closing tag (except self-closing like `<br/>`).
-    *   **Nesting:** Tags must be properly nested (e.g., `<p><strong>text</strong></p>` is correct, `<p><strong>text</p></strong>` is incorrect).
-    *   **No Markdown:** Do NOT use Markdown syntax (like `*`, `#`, `[]()`). Only use the specified HTML tags.
-    *   **No ```:** Do NOT include ```html or ``` anywhere in the output.
-
-</format_instructions>
+json_output_format = """
+CRITICAL INSTRUCTION: YOUR *ENTIRE* RESPONSE MUST BE *ONLY* A SINGLE VALID JSON OBJECT, STARTING WITH `{` AND ENDING WITH `}`.
+- NO OTHER TEXT, EXPLANATIONS, OR MARKDOWN FENCES (like ```json) ARE ALLOWED ANYWHERE IN THE RESPONSE.
+- DO NOT ADD ANY INTRODUCTORY SENTENCE OR CONCLUDING REMARKS.
+- FOLLOW THE PROVIDED `TARGET JSON SCHEMA` WITH ABSOLUTE PRECISION. Match key names, nesting, and data types exactly.
+- USE THE `EXAMPLE JSON STRUCTURE` provided as a guide for the correct structure.
+- USE JSON `null` for any optional field where data is not found in the documents. DO NOT OMIT KEYS unless explicitly optional in the schema AND data is absent.
+- Place any relevant extracted information that does *not* fit the specific schema fields into the nearest available `"notes"` field within the JSON structure (or `analysis_text` if that is the primary field).
+- Ensure the final output is perfectly parseable JSON.
 """
 
 # --- Kept for potential future use, but not used by current section_processor ---
