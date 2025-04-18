@@ -16,6 +16,7 @@ user_log.json
 permitted_users.json
 # C extensions
 *.so
+mece_json.md
 
 # Distribution / packaging
 .Python
