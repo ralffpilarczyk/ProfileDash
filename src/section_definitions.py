@@ -1394,75 +1394,8 @@ sections = [
              "footnotes": [], # Fixed placeholder
              "notes": None
         }
-    },
-# --- START: Section 32 Definition (Simplified - Table Text Dump) ---
-    {
-        "number": 32,
-        "title": "Appendix - Extracted Tables", # Renamed for clarity
-        "specs": "Identify and extract the textual content of any data tables found within the provided source documents. Present each table clearly, perhaps using markdown table format or simple text formatting within the JSON string. Include source document and page number for context if possible.",
-        "schema": { # Schema defined directly, DO NOT wrap with add_standard_fields()
-            "type": "object",
-            "properties": {
-                "extracted_tables": {
-                    "type": "array",
-                    "description": "List of extracted tables, including context and text content.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "table_description": {"type": ["string", "null"], "description": "Optional title or brief description of the table's content."},
-                            "table_content_text": {"type": "string", "description": "The extracted textual representation of the table (e.g., plain text, markdown format)."},
-                            "document_name": {"type": ["string", "null"], "description": "Source document filename."},
-                            "source_page": {"type": ["string", "integer", "null"], "description": "Page number where table was found."},
-                            "notes": {"type": ["string", "null"], "description": "Optional notes about the extraction."}
-                        },
-                        "required": ["table_content_text"],
-                        "additionalProperties": False
-                    }
-                },
-                "footnotes": { # Standard footnotes field defined here explicitly
-                    "type": "array",
-                    "description": "List of sources used in table descriptions or analysis.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string", "description": "Unique reference ID (e.g., 'ref1')."},
-                            "document": {"type": "string", "description": "Source document name/description."},
-                            "page": {"type": ["string", "integer", "null"], "description": "Page number(s) or identifier."},
-                            "section": {"type": ["string", "null"], "description": "Specific section/table within the document."}
-                        },
-                        "required": ["id", "document"],
-                        "additionalProperties": False
-                    }
-                },
-                "notes": {"type": ["string", "null"], "description": "Optional general notes for the entire section."} # Standard top-level notes
-            },
-            "required": ["extracted_tables", "footnotes"], # Require the array and footnotes, even if empty
-            "additionalProperties": False
-        },
-        "template": { # Example showing how extracted tables might look
-            "extracted_tables": [
-                {
-                    "table_description": "Summary Income Statement (Half Year Ended 30 Sep)",
-                    "table_content_text": "| Metric (S$ m) | 2024 | 2023 | Chge % |\\n|---|---|---|---|\\n| Operating revenue | 6,992 | 7,028 | -0.5 |\\n| EBITDA | 1,947 | 1,787 | 9.0 |\\n| ... | ... | ... | ... |",
-                    "document_name": "Singtel MDNA H125.pdf",
-                    "source_page": "6",
-                    "notes": "Formatted as markdown example."
-                },
-                {
-                    "table_description": "Mobile Customer Market Share (%)",
-                    "table_content_text": "Region | Mar 22 | Sep 23 | Mar 24 | Sep 24\\nSingapore | 48.0 | 45.3 | 46.3 | 45.5\\n...",
-                    "document_name": "Singtel MDNA H125.pdf",
-                    "source_page": "4",
-                    "notes": "Formatted as plain text example."
-                }
-            ],
-            "footnotes": [],
-            "notes": "Contains textual representations of tables found."
-        }
     }
-# --- END: Section 32 Definition (Simplified - Table Text Dump) ---
-# --- END: Section 32 Definition (Simplified - Table Text Dump) ---
-] # Added missing closing bracket for the main 'sections' list
+] 
 
 # Function to get schema or template for prompts (can be used in section_processor)
 def get_section_schema_string(section_number):

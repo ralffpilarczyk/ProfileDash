@@ -19,6 +19,9 @@ from sendgrid.helpers.mail import (
 )
 from src.section_definitions import sections
 from src.section_processor import generate_initial_section
+from src.document_processor import load_document_content
+from src.html_generator import generate_full_html_profile, render_json_profile_to_html
+import html # Import html for escaping
 
 # --- Configuration & Global Variables ---
 APP_VERSION = "v1.0.5"
@@ -225,6 +228,9 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
     company_name = "Unknown_Company"
     timestamp_for_filename = time.strftime('%Y%m%d_%H%M%S')
     final_json_profile = None
+    final_html_output = None # Initialize HTML output variable
+    saved_html_repo_path = None # Initialize HTML save path
+    attachment_object = None # Initialize attachment object
 
     try:
         # --- 1. Configure Google AI ---
@@ -410,6 +416,97 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
             append_bg_log("Error: Final JSON profile generation failed or produced empty content.")
             raise ValueError("Final JSON profile generation failed, cannot save profile.")
 
+        # --- Render HTML Output ---
+        # Check if JSON profile generation seemed okay before attempting render
+        # (Using the existing 'generation_status' in metadata is a good check)
+        saved_html_repo_path = None # Initialize HTML save path
+        if final_json_profile and final_json_profile.get('profile_metadata', {}).get('generation_status') != "Failed": 
+            try:
+                append_bg_log("Attempting to render HTML from JSON profile...")
+                
+                # --- Call the main renderer ---
+                final_html_output = render_json_profile_to_html(final_json_profile) 
+                
+                # Basic check if rendering returned a non-empty string
+                if final_html_output and isinstance(final_html_output, str) and len(final_html_output) > 500: 
+                     append_bg_log("HTML rendering step completed successfully (output generated).")
+                     # --- Save the final HTML output to dataset ---
+                     # Check again if output is valid before saving
+                     if final_html_output and isinstance(final_html_output, str) and len(final_html_output) > 500:
+                         saved_html_repo_path = save_profile_hf_dataset(
+                             profile_content=final_html_output, 
+                             content_type="html", # Specify HTML type
+                             run_id=run_id, 
+                             company_name=company_name, # Ensure these are in scope
+                             user_email=user_email  # Ensure these are in scope
+                         )
+                         if saved_html_repo_path:
+                             append_bg_log(f"Final HTML profile saved successfully to dataset: {saved_html_repo_path}")
+                         else:
+                             append_bg_log("Warning: Failed to save final HTML profile to dataset.")
+                             # Optional: Decide if save failure should nullify final_html_output
+                             # final_html_output = None 
+                else:
+                     append_bg_log("Warning: HTML rendering step produced empty or invalid output.")
+                     final_html_output = None # Ensure it's None if empty/invalid
+
+            except Exception as render_err:
+                 append_bg_log(f"ERROR during HTML rendering step: {render_err}")
+                 traceback.print_exc()
+                 final_html_output = None # Indicate rendering failure
+        else:
+            append_bg_log("Skipping HTML rendering because JSON profile generation failed or was incomplete.")
+        # --- End of Render HTML ---
+
+        # --- Prepare HTML Attachment ---
+        if final_html_output: # Check if HTML was successfully generated (even if saving failed, we might still try to attach)
+            try:
+                append_bg_log("Preparing HTML attachment for email...")
+                # Ensure final_html_output is a string before encoding
+                if isinstance(final_html_output, str):
+                    encoded_html_content = base64.b64encode(final_html_output.encode('utf-8')).decode('ascii')
+                    
+                    # Construct filename based on JSON path or HTML path or fallback
+                    attachment_filename = f"ProfileDash_{company_name}.html" # Default fallback
+                    # Use final_profile_repo_path (path where JSON was saved) if available
+                    if 'final_profile_repo_path' in locals() and final_profile_repo_path: 
+                        try:
+                            base_filename = os.path.splitext(os.path.basename(final_profile_repo_path))[0]
+                            attachment_filename = f"{base_filename}.html"
+                        except Exception as path_e:
+                             append_bg_log(f"Warning: Could not derive attachment name from JSON path '{final_profile_repo_path}': {path_e}")
+                    # Fallback to using HTML path if JSON path wasn't available but HTML was saved
+                    elif 'saved_html_repo_path' in locals() and saved_html_repo_path: 
+                         try:
+                             attachment_filename = os.path.basename(saved_html_repo_path)
+                         except Exception as path_e:
+                              append_bg_log(f"Warning: Could not derive attachment name from HTML path '{saved_html_repo_path}': {path_e}")
+                    
+                    # Ensure filename ends with .html
+                    if not attachment_filename.lower().endswith('.html'):
+                         attachment_filename += ".html"
+
+                    # Ensure necessary SendGrid helpers are imported at top of app.py:
+                    # from sendgrid.helpers.mail import Attachment, FileContent, FileName, FileType, Disposition
+                    attachment_object = Attachment(
+                        FileContent(encoded_html_content),
+                        FileName(attachment_filename),
+                        FileType('text/html'),
+                        Disposition('attachment')
+                    )
+                    append_bg_log(f"HTML Attachment object created: {attachment_filename}")
+                else:
+                    append_bg_log("Warning: final_html_output is not a string, cannot create attachment.")
+                    attachment_object = None
+
+            except Exception as attach_prep_e:
+                append_bg_log(f"ERROR preparing HTML attachment: {attach_prep_e}")
+                traceback.print_exc()
+                attachment_object = None # Ensure attachment is None if prep fails
+        else:
+            append_bg_log("Skipping HTML attachment preparation as HTML output was not generated.")
+        # --- End Prepare HTML Attachment ---
+
     except Exception as generation_e:
         # Catch errors from any stage within the main pipeline
         print(f"BG Run {run_id}: CRITICAL ERROR during generation pipeline: {generation_e}")
@@ -429,7 +526,6 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
     append_bg_log("Preparing email notification...")
     email_subject = ""
     email_html_content = ""
-    attachment_object = None # SendGrid attachment object
 
     # Determine Final Outcome for Email Composition
     generation_succeeded_fully = not error_message_for_email and final_profile_saved_to_dataset
@@ -440,52 +536,23 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
     if generation_succeeded_fully:
         status_string = "completed successfully"
         email_subject = f"ProfileDash: Profile for {company_name} is Ready"
-
-        # Prepare the JSON profile as a Base64 encoded attachment
-        if final_json_profile and final_profile_repo_path:
-            try:
-                append_bg_log("Encoding JSON content to Base64 for attachment...")
-
-                json_content = json.dumps(final_json_profile, indent=2)
-                encoded_content = base64.b64encode(json_content.encode('utf-8')).decode('ascii')
-
-                append_bg_log("Base64 encoding complete. Creating attachment object...")
-
-                attachment_filename = os.path.basename(final_profile_repo_path)
-                if not attachment_filename.lower().endswith('.json'):
-                    attachment_filename += ".json"
-
-                attachment_object = Attachment(
-                    FileContent(encoded_content),
-                    FileName(attachment_filename),
-                    FileType('application/json'),
-                    Disposition('attachment')
-                )
-                append_bg_log("Attachment object created successfully.")
-
-                email_html_content = f"""
-                <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p>
-                <p>The generated profile is attached to this email as a JSON file.</p>
-                <p>(Run ID: {run_id})</p>
-                <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
-                """
-            except Exception as attach_prep_e:
-                append_bg_log(f"ERROR preparing Base64 attachment from string: {attach_prep_e}.")
-                traceback.print_exc()
-                email_html_content = f"""
-                <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}, but there was an error preparing the file for attachment.</p>
-                <p>Please try generating the profile again or contact support if the issue persists.</p>
-                <p>(Run ID: {run_id})</p>
-                <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
-                """
-        else:
-            append_bg_log("Final JSON content or repo path not available, cannot attach. Sending note.")
-            email_html_content = f"""
-            <p>Your ProfileDash profile generation for <strong>{company_name}</strong> completed, but the final profile could not be located or generated correctly for attachment.</p>
-            <p>Please try generating the profile again or contact support.</p>
-            <p>(Run ID: {run_id})</p>
-            <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
-            """
+        # Check if HTML attachment object was successfully created
+        if attachment_object:
+             email_html_content = f"""
+             <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p>
+             <p>The generated HTML profile is attached to this email.</p>
+             <p>The raw JSON data used to generate this report has also been saved to the ProfileDash dataset.</p>
+             <p>(Run ID: {run_id})</p>
+             <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
+             """
+        else: 
+             # HTML rendering/attachment failed, even if JSON generation succeeded
+             email_html_content = f"""
+             <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}, but there was an error preparing the HTML view for attachment.</p>
+             <p>The raw JSON data has been saved successfully to the ProfileDash dataset. Please contact support if the issue persists.</p> 
+             <p>(Run ID: {run_id})</p>
+             <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
+             """
 
         # Log RunCompleted status for full success
         try:
@@ -496,30 +563,68 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
         except Exception as log_complete_e: print(f"Error logging RunCompleted success: {log_complete_e}")
 
     elif generation_completed_with_errors:
-         status_string = "completed with some errors"
-         if section_processing_error: status_string += " during section generation"
-         if not final_profile_saved_to_dataset: status_string += " (final profile save failed)"
-         email_subject = f"ProfileDash: Profile for {company_name} Completed (with errors)"
-         email_html_content = f"""
-         <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p>
-         <p>Some sections may contain errors or be incomplete. You may want to try generating the profile again or check the logs.</p>
-         <p>(Run ID: {run_id})</p>
-         <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
-         """
-         # Log RunCompleted with Error status
-         try:
-             log_event = {"event": "RunCompleted", "runId": run_id, "status": "CompletedWithErrors",
-                          "finalProfileSaved": final_profile_saved_to_dataset,
-                          "sectionProcessingErrorEncountered": section_processing_error}
-             save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
-         except Exception as log_complete_e: print(f"Error logging RunCompletedWithErrors: {log_complete_e}")
+        status_string = "completed with some errors"
+        email_subject = f"ProfileDash: Profile for {company_name} Completed (with errors)"
+        
+        error_list_html = "<ul>"
+        errors_dict = final_json_profile.get('errors', {}) if final_json_profile else {} # Get errors dict safely
+        failed_sections_count = len(errors_dict) # Get count from here
+        
+        if errors_dict:
+            # Access global sections list defined near the top of the file
+            section_titles = {str(s['number']): s['title'] for s in sections if isinstance(s, dict)}
+            # Sort errors by section number if possible
+            try:
+                sorted_error_keys = sorted(errors_dict.keys(), key=int)
+            except ValueError:
+                sorted_error_keys = list(errors_dict.keys()) # Fallback
+            
+            for sec_num_str in sorted_error_keys:
+                err_info = errors_dict.get(sec_num_str)
+                title = section_titles.get(str(sec_num_str), f"Section {sec_num_str}")
+                # Use sec_num_str directly if conversion isn't needed or safe
+                err_msg = err_info.get('error', 'Unknown Error') if isinstance(err_info, dict) else str(err_info)
+                # Add details if available
+                err_details = err_info.get('details', err_info.get('message', '')) if isinstance(err_info, dict) else ''
+                err_list_item = f"Section {sec_num_str} ({html.escape(title)}): {html.escape(err_msg)}"
+                if err_details:
+                    err_list_item += f" - <small><i>Details: {html.escape(str(err_details)[:150])}...</i></small>" # Show snippet
+                error_list_html += f"<li style='margin-bottom: 5px;'>{err_list_item}</li>"
+        else:
+            error_list_html += "<li>Specific section errors details unavailable.</li>"
+        error_list_html += "</ul>"
+
+        email_html_content = f"""
+        <p>Your ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p>
+        <p>Errors occurred in {failed_sections_count} section(s):</p>
+        {error_list_html}
+        """
+        # Add attachment message based on attachment_object
+        if attachment_object:
+            email_html_content += "<p>A partial HTML profile (potentially missing failed sections or containing errors) is attached.</p>"
+        else:
+            email_html_content += "<p>The partial JSON data (excluding failed sections) has been saved to the ProfileDash dataset. HTML rendering/attachment failed.</p>"
+
+        email_html_content += f"""
+        <p>You may want to review the errors or try generating again.</p> 
+        <p>(Run ID: {run_id})</p>
+        <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
+        """
+        # Log RunCompleted with Error status
+        try:
+            log_event = {"event": "RunCompleted", "runId": run_id, "status": "CompletedWithErrors",
+                         "finalProfileSaved": final_profile_saved_to_dataset,
+                         "sectionProcessingErrorEncountered": section_processing_error}
+            save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
+        except Exception as log_complete_e: print(f"Error logging RunCompletedWithErrors: {log_complete_e}")
 
     else: # generation_failed_critically is True
         email_subject = f"ProfileDash: Profile Generation Failed for {company_name}"
-        error_details = error_message_for_email if error_message_for_email else 'An unspecified critical error occurred.'
+        # Ensure error_message_for_email holds the critical error captured earlier
+        error_details = error_message_for_email if error_message_for_email else 'An unspecified critical error occurred during generation.'
         email_html_content = f"""
-        <p>Unfortunately, the ProfileDash profile generation for <strong>{company_name}</strong> failed.</p>
-        <p>Error details: {error_details}</p>
+        <p>Unfortunately, the ProfileDash profile generation for <strong>{company_name}</strong> failed critically.</p>
+        <p>Error details: {html.escape(error_details)}</p>
         <p>Please check the logs or contact support if the issue persists.</p>
         <p>(Run ID: {run_id})</p>
         <hr><p style='font-size:small; color:grey;'>ProfileDash {APP_VERSION}</p>
@@ -536,9 +641,9 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
                 html_content=Content("text/html", email_html_content)
             )
 
-            if attachment_object:
+            if attachment_object: # Add attachment only if it was successfully created
                 message.attachment = attachment_object
-                append_bg_log("Base64 Attachment added to email message.")
+                append_bg_log("HTML Attachment added to email message.")
 
             response = sg.client.mail.send.post(request_body=message.get())
 
