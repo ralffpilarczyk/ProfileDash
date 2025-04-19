@@ -1,4 +1,3 @@
-# --- START OF FILE src/prompts.py ---
 """
 Prompts module for ProfileDash
 Contains all prompt templates used by the application
@@ -43,14 +42,3 @@ CRITICAL INSTRUCTION: YOUR *ENTIRE* RESPONSE MUST BE *ONLY* A SINGLE VALID JSON 
 - Place any relevant extracted information that does *not* fit the specific schema fields into the nearest available `"notes"` field within the JSON structure (or `analysis_text` if that is the primary field).
 - Ensure the final output is perfectly parseable JSON.
 """
-
-# --- Kept for potential future use, but not used by current section_processor ---
-# Define instruction prompt with delimiter
-# delimiter = "####"
-# def get_initial_instruction(company_profile_specs):
-#     """Generate the initial instruction with provided company profile specs"""
-#     return f"""
-# Please create a company profile... (rest of function) ...
-# """
-# --- End Unused Function ---
-# --- END OF FILE src/prompts.py ---

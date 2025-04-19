@@ -8,7 +8,7 @@ import os
 import re
 import json
 from datetime import datetime
-import html # Standard library for HTML processing
+import html # Standard library for HTML processing (e.g., escaping, unescaping)
 import traceback # For detailed error logging
 
 # --- Helper Function for Cleaning LLM Output ---
@@ -17,13 +17,12 @@ def clean_llm_output(content, section_num=None, section_title=None):
     if not content or not isinstance(content, str):
         return ""
 
-    # Remove ```html marker and ```
+    # Remove common markdown code block fences
     content = content.replace('```html', '').replace('```', '').strip()
 
-    # Only attempt duplicate title removal if we have section info
+    # Only attempt duplicate title removal if section number and title are provided
     if section_num is not None and section_title is not None:
-        # Pattern to find the expected H2 title (more robustly)
-        # Allows for attributes in h2 tag, handles whitespace, optional period after number
+        # Pattern to find the expected H2 title (allows for attributes, whitespace, optional period)
         h2_pattern_str = rf'<h2[^>]*?>\s*{re.escape(str(section_num))}\.?\s*{re.escape(section_title)}.*?</h2>'
         h2_match = re.search(h2_pattern_str, content, re.IGNORECASE | re.DOTALL)
 
@@ -33,8 +32,8 @@ def clean_llm_output(content, section_num=None, section_title=None):
             h2_full_tag = h2_match.group(0)
             h2_end_pos = h2_match.end()
             escaped_title = re.escape(section_title)
-            # Adjusted pattern to look for potential duplicates immediately following H2
-            # Allows for whitespace, optional number/dot, optional down arrow symbol
+            # Pattern to look for potential duplicates immediately following H2
+            # Allows for whitespace, optional number/dot, optional down arrow symbol (▼)
             duplicate_title_pattern_str = rf'^\s*(?:{re.escape(str(section_num))}\.?\s*)?{escaped_title}\s*▼?\s*'
             following_content = content[h2_end_pos:]
 
@@ -42,20 +41,20 @@ def clean_llm_output(content, section_num=None, section_title=None):
             duplicate_match = re.match(duplicate_title_pattern_str, following_content, re.IGNORECASE | re.MULTILINE)
 
             if duplicate_match:
-                # If a duplicate is found right after H2, remove it
+                # If a duplicate title text is found right after the H2 tag, remove it
                 duplicate_text_length = duplicate_match.end()
-                # Reconstruct content: keep everything up to the end of H2 tag, then skip the duplicate text
+                # Reconstruct content: keep up to the end of H2 tag, then skip the duplicate text
                 cleaned_content = content[:h2_end_pos] + following_content[duplicate_text_length:]
                 print(f"HTML Cleaner: Removed suspected duplicate title for section {section_num}")
 
         return cleaned_content.strip()
     else:
-        # If no section info, just return the content stripped of ```html
+        # If no section info, just return the content stripped of code fences
         return content
 
-# --- Folder/File Operations (Kept from Old Version, not used by current app.py) ---
+# --- Folder/File Operations (Kept from Old Version, potentially inactive) ---
 def create_profile_folder(company_name):
-    """Create a unique folder for storing profile sections"""
+    """Create a unique folder for storing profile sections (potentially inactive)."""
     print("HTML Generator: create_profile_folder called (inactive in current app).")
     clean_name = ''.join(c for c in company_name if c.isalnum() or c in [' ', '_', '-']).replace(' ', '_')
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -66,10 +65,10 @@ def create_profile_folder(company_name):
         return folder_name, timestamp
     except Exception as e:
         print(f"HTML Generator Error creating folder {folder_name}: {e}")
-        return ".", timestamp # Fallback to current directory
+        return ".", timestamp # Fallback to current directory if folder creation fails
 
 def save_section(profile_folder, section_number, content):
-    """Save a section's HTML content to a file."""
+    """Save a section's HTML content to a file (potentially inactive)."""
     print(f"HTML Generator: save_section {section_number} called (inactive in current app).")
     if not isinstance(content, str): content = str(content)
     try:
@@ -78,7 +77,7 @@ def save_section(profile_folder, section_number, content):
     except Exception as e: print(f"HTML Generator Error saving section {section_number} to {profile_folder}: {e}")
 
 def load_section(profile_folder, section_number):
-    """Load a section's HTML content from a file if it exists."""
+    """Load a section's HTML content from a file if it exists (potentially inactive)."""
     print(f"HTML Generator: load_section {section_number} called (inactive in current app).")
     filepath = os.path.join(profile_folder, f"section_{section_number}.html")
     if os.path.exists(filepath):
@@ -89,30 +88,31 @@ def load_section(profile_folder, section_number):
 # --- End Folder/File Operations ---
 
 def validate_html(html_content):
-    """Simplified HTML validation, focusing on structure and critical tags."""
+    """Performs simplified HTML validation, focusing on common structural issues."""
     if not html_content or not isinstance(html_content, str) or not html_content.strip():
         print("HTML Validator Warning: Empty HTML content")
-        return False
+        return False # Empty content is considered invalid
 
     # 1. Check for basic section structure (presence of <div class="section">)
-    # Make it more robust to handle potential attributes
+    # This pattern handles potential attributes within the div tag.
     if not re.search(r'<div\s+[^>]*?class=["\']section["\']', html_content, re.IGNORECASE):
         print("HTML Validator Warning: Missing outer <div class=\"section\"> tag.")
-        # Decide if this is a failure condition - maybe too strict if LLM forgets it
+        # Note: Currently treated as a warning, not a hard failure.
         # return False
 
-    # 2. Check for very common unclosed tags at the end (simple check)
+    # 2. Check for likely unclosed tags at the very end (simple check)
+    # Looks for tags like <p>, <li>, etc., followed only by optional whitespace at the end.
     if re.search(r'< (p|li|td|th) [^>]* > $', html_content.strip(), re.IGNORECASE | re.MULTILINE):
          print("HTML Validator Warning: Possible unclosed tag at the end.")
-         # return False # Optional: Make this a failure
+         # return False # Optional: Could be treated as a failure
 
-    # 3. Check balance of critical tags (div, table, tr, td, th)
+    # 3. Check balance of critical container tags (div, table, tr, td, th)
     critical_tags = ['div', 'table', 'tr', 'td', 'th']
     balanced = True
     for tag in critical_tags:
         try:
             # Regex to find opening tags, ignoring self-closing ones like <br/>
-            # Handles attributes within the tag
+            # Handles attributes within the tag.
             opening_pattern = f'<{tag}(?:\\s+[^>]*?)?>(?!</{tag}>)'
             closing_pattern = f'</{tag}\\s*>'
 
@@ -121,107 +121,111 @@ def validate_html(html_content):
 
             if opening_count != closing_count:
                 print(f"HTML Validator Warning: Unbalanced <{tag}> tags detected. Opening: {opening_count}, Closing: {closing_count}")
-                # Consider DIV and TABLE mismatches critical failures
+                # Consider DIV and TABLE mismatches critical failures.
                 if tag in ['div', 'table']:
                     balanced = False
-                    # break # Stop checking if a critical tag is unbalanced
+                    # Stop checking further if a critical tag is unbalanced
+                    # break
         except Exception as e:
-            # Handle potential regex errors, treat as validation failure
+            # Handle potential regex compilation/matching errors, treat as validation failure.
             print(f"HTML Validator Error validating <{tag}>: {e}")
             balanced = False
             # break
 
-    # Consider it valid if critical tags are balanced (or checks passed)
+    # The HTML is considered valid if critical tags are balanced (and other checks passed or were non-fatal).
     return balanced
 
 
 def repair_html(html_content, section_num=None, section_title=None):
-    """Repairs common HTML issues, focusing on structure and tag closure."""
+    """Attempts to repair common HTML issues, like missing wrappers, headers, and unbalanced tags."""
     if not html_content or not isinstance(html_content, str) or not html_content.strip():
-        # Generate default error content if input is bad
+        # Generate default error content if input is empty or invalid.
         default_h2 = f'{section_num or "?"}. {section_title or "Untitled Section"}'
         return f'<div class="section" id="section-{section_num or "unknown"}"><h2 class="error-header">{default_h2}</h2><p class="error">No content available or initial generation failed.</p></div>'
 
     # --- Initial Cleaning ---
-    # Remove ```html markers first
     html_content = html_content.replace('```html', '').replace('```', '').strip()
-    # Standardize self-closing br tags
+    # Standardize self-closing br tags for consistency.
     html_content = re.sub(r'<br\s*>', '<br/>', html_content, flags=re.IGNORECASE)
-    # Remove potential markdown list prefixes if they leak through
+    # Remove potential markdown list prefixes if they accidentally remain.
     html_content = re.sub(r'^\s*[\*\-]\s+', '', html_content, flags=re.MULTILINE)
 
     # --- Ensure Section Wrapper and Header ---
-    # Only add if section info is provided
+    # Only proceed if section number and title are available for context.
     if section_num is not None and section_title is not None:
         id_attr = f'id="section-{section_num}"'
         class_attr = 'class="section"'
         h2_text = f'{section_num}. {section_title}'
-        # More robust patterns allowing attributes
+        # Robust patterns allowing attributes and varying whitespace.
         div_start_pattern = re.compile(r'^\s*<div\s+[^>]*?class=["\']section["\']', re.IGNORECASE | re.DOTALL)
         div_id_pattern = re.compile(rf'id=["\']section-{section_num}["\']', re.IGNORECASE)
         h2_pattern = re.compile(rf'<h2[^>]*?>\s*{re.escape(str(section_num))}\.?\s*{re.escape(section_title)}.*?</h2>', re.IGNORECASE | re.DOTALL)
         h2_generic_pattern = re.compile(rf'<h2[^>]*?>\s*{re.escape(str(section_num))}\.?\s*.*?</h2>', re.IGNORECASE | re.DOTALL)
 
-        # 1. Check/Add Outer Div
+        # 1. Check/Add Outer Div Wrapper (<div class="section" id="...">)
         if not div_start_pattern.search(html_content):
             print(f"HTML Repair (Sec {section_num}): Adding missing outer div.")
             html_content = f'<div {class_attr} {id_attr}>\n{html_content}\n</div>'
         else:
-            # Ensure ID exists if div is present
+            # If the outer div exists, ensure it has the correct ID attribute.
             first_div_match = re.search(r'<div[^>]*>', html_content, re.IGNORECASE)
             if first_div_match:
                 first_div_tag = first_div_match.group(0)
                 if not div_id_pattern.search(first_div_tag):
                     print(f"HTML Repair (Sec {section_num}): Adding missing ID to existing div.")
+                    # Insert the id attribute into the existing tag.
                     html_content = html_content.replace(first_div_tag, f'{first_div_tag[:-1]} {id_attr}>', 1)
 
-        # 2. Check/Add H2 Header (inside the div)
+        # 2. Check/Add H2 Header (within the div)
         if not h2_pattern.search(html_content):
             print(f"HTML Repair (Sec {section_num}): Adding/Fixing H2 header.")
-            # Remove any existing generic H2 for this section number first
+            # Remove any existing H2 for this section number first to avoid duplicates.
             html_content = h2_generic_pattern.sub('', html_content)
-            # Insert the correct H2 after the opening div tag
+            # Insert the correct H2 right after the opening div tag.
             html_content = re.sub(r'(<div[^>]*?>\n?)', rf'\1<h2>{h2_text}</h2>\n', html_content, count=1, flags=re.IGNORECASE)
 
     # --- Tag Balancing (Simple iterative approach) ---
-    # Focus on common block elements that cause layout issues if unclosed
+    # Focus on common block elements prone to causing layout issues if unclosed.
     tags_to_balance = ['p', 'li', 'ul', 'ol', 'td', 'th', 'tr', 'thead', 'tbody', 'table', 'div']
-    MAX_ITERATIONS = 3 # Limit iterations to prevent infinite loops
+    MAX_ITERATIONS = 3 # Limit iterations to prevent potential infinite loops in edge cases.
     for _ in range(MAX_ITERATIONS):
         made_change = False
         for tag in tags_to_balance:
             try:
-                # Find all opening tags (careful with self-closing)
+                # Find all opening tags (ignoring self-closing syntax within the tag)
                 opening_tags = re.findall(rf'<{tag}(?:\s+[^>]*)?>', html_content, re.IGNORECASE)
                 closing_tags = re.findall(rf'</{tag}\s*>', html_content, re.IGNORECASE)
                 diff = len(opening_tags) - len(closing_tags)
 
                 if diff > 0:
-                    # Add missing closing tags at the end
+                    # Add missing closing tags at the very end of the content.
                     print(f"HTML Repair (Sec {section_num}): Adding {diff} missing </{tag}> tags.")
                     html_content += f'</{tag}>' * diff
                     made_change = True
                 elif diff < 0:
-                    # Remove extra closing tags from the end (basic approach)
+                    # Remove extra closing tags from the end (basic, greedy approach).
                     print(f"HTML Repair (Sec {section_num}): Removing {-diff} extra </{tag}> tags from end.")
                     for _ in range(-diff):
+                         # Only remove if the tag is exactly at the end (ignoring trailing whitespace).
                          if html_content.rstrip().lower().endswith(f'</{tag}>'):
                               html_content = html_content.rstrip()[:-len(f'</{tag}>')].rstrip() + "\n"
                               made_change = True
                          else:
-                              break # Stop if tag not found at end
+                              break # Stop removing if the expected tag isn't found at the end.
 
             except Exception as e:
                  print(f"HTML Repair Warning: Error balancing tag <{tag}>: {e}")
+        # If a full pass makes no changes, assume stability or irrecoverable state.
         if not made_change:
-             break # Exit loop if no changes were made in an iteration
+             break
 
     # --- Table Structure Repair (thead/tbody) ---
-    # Try to ensure basic thead/tbody wrapping
+    # Attempt to enforce basic thead/tbody wrapping for semantic structure and styling.
     new_table_content = ""
     last_table_end = 0
     try:
         for table_match in re.finditer(r'(<table[^>]*>)(.*?)(</table\s*>)', html_content, re.DOTALL | re.IGNORECASE):
+            # Append content before the current table.
             new_table_content += html_content[last_table_end:table_match.start()]
             original_table = table_match.group(0)
             table_start_tag = table_match.group(1)
@@ -234,65 +238,75 @@ def repair_html(html_content, section_num=None, section_title=None):
             has_th = bool(re.search(r'<th[^>]*>', modified_inner, re.IGNORECASE))
             has_tr = bool(re.search(r'<tr[^>]*>', modified_inner, re.IGNORECASE))
 
-            # Add <thead> if <th> exists but <thead> is missing
+            # Add <thead> if <th> exists within a <tr> but no <thead> is present.
             if has_tr and has_th and not has_thead:
+                # Find the first row containing a <th> (assumed header row).
                 header_row_match = re.search(r'(<tr.*?(?:<th.*?>).*?</tr\s*>)', modified_inner, re.IGNORECASE | re.DOTALL)
                 if header_row_match:
                     header_row_html = header_row_match.group(1)
-                    # Wrap the first row(s) containing <th> in <thead>
+                    # Wrap this header row in <thead> tags.
                     modified_inner = modified_inner.replace(header_row_html, f"<thead>\n{header_row_html}\n</thead>", 1)
                     print(f"HTML Repair (Sec {section_num}): Added missing <thead>.")
-                    has_thead = True
+                    has_thead = True # Mark thead as now present.
 
-            # Add <tbody> if <tr> exists outside of <thead> and <tbody> is missing
+            # Add <tbody> if <tr> exists (either after <thead> or if no <thead> exists) and <tbody> is missing.
             if has_tr and not has_tbody:
                 tbody_content_start = 0
                 if has_thead:
+                    # If thead exists, tbody content starts after its closing tag.
                     thead_end_match = re.search(r'</thead\s*>', modified_inner, re.IGNORECASE)
                     if thead_end_match:
                         tbody_content_start = thead_end_match.end()
 
+                # Extract potential body content.
                 body_content = modified_inner[tbody_content_start:].strip()
-                if body_content and '<tr' in body_content.lower(): # Check if there's actual row content for tbody
+                # Only add tbody if there's actual row content for it.
+                if body_content and '<tr' in body_content.lower():
+                    # Wrap the remaining content in <tbody>.
                     modified_inner = modified_inner[:tbody_content_start] + f"\n<tbody>\n{body_content}\n</tbody>"
                     print(f"HTML Repair (Sec {section_num}): Added missing <tbody>.")
-                    has_tbody = True
+                    has_tbody = True # Mark tbody as now present.
 
+            # Reconstruct the table with potentially modified inner content.
             new_table_html = table_start_tag + '\n' + modified_inner + '\n' + table_end_tag
             new_table_content += new_table_html
             last_table_end = table_match.end()
 
+        # Append any content remaining after the last table.
         new_table_content += html_content[last_table_end:]
         html_content = new_table_content
     except Exception as e:
         print(f"HTML Repair Warning: Error during table structure repair: {e}")
-        # Don't halt repair, continue with the content as is
+        # Continue with the potentially unmodified content if table repair fails.
 
-    # Final Validation and Fallback
+    # --- Final Validation and Fallback ---
+    # Check if the repaired HTML passes the basic validation.
     if not validate_html(html_content):
         print(f"HTML Repair Warning: Content failed validation even after repair for section {section_num}.")
-        # Fallback to simple text extraction if repair fails validation
+        # Fallback to extracting plain text if repair fails validation, to prevent broken HTML display.
         try:
-            plain_text = extract_text_from_html(html_content) # Use the extraction function
+            plain_text = extract_text_from_html(html_content)
+            # Escape the extracted text to display safely within HTML <pre> tags.
             escaped_text = html.escape(plain_text[:2000] + "..." if len(plain_text) > 2000 else plain_text)
             default_h2 = f'{section_num or "?"}. {section_title or "Untitled Section"}'
             html_content = f'<div class="section" id="section-{section_num or "unknown"}"><h2 class="error-header">{default_h2}</h2><p class="error">Warning: Original HTML structure invalid after repair attempt. Displaying extracted text:</p><pre style="white-space: pre-wrap; word-wrap: break-word;">{escaped_text}</pre></div>'
             print(f"HTML Repair (Sec {section_num}): Fallback to text extraction.")
         except Exception as fallback_e:
             print(f"HTML Repair Error during fallback text extraction: {fallback_e}")
+            # Ultimate fallback if text extraction also fails.
             default_h2 = f'{section_num or "?"}. {section_title or "Untitled Section"}'
             html_content = f'<div class="section" id="section-{section_num or "unknown"}"><h2 class="error-header">{default_h2}</h2><p class="error">Error: Could not repair content or extract text.</p></div>'
 
     return html_content.strip()
 
-# MODIFIED: Added app_version parameter (as in previous `app.py`)
+# Note: app_version parameter added for compatibility with previous usage.
 def generate_full_html_profile(company_name, sections, section_contents, app_version=""):
-    """Generate a complete HTML document from section contents"""
+    """Generates a complete HTML document from individual section contents."""
     from datetime import datetime
     escaped_company_name = html.escape(company_name) if company_name else "Unknown Company"
     escaped_app_version = html.escape(app_version) if app_version else ""
 
-    # --- CSS Modifications from Previous `app.py` ---
+    # --- Base Styles, Layout, and Print Adjustments ---
     html_head = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -313,7 +327,7 @@ def generate_full_html_profile(company_name, sections, section_contents, app_ver
         tbody tr:nth-child(even) {{ background-color: #fdfdfd; }}
         .section {{ margin-bottom: 25px; padding-top: 10px; }}
         /* Collapsible Content Styling */
-        .section-content {{ padding-left: 10px; border-left: 3px solid #f0f0f0; margin-top: 15px; overflow: hidden; transition: max-height 0.4s ease-out, padding-top 0.4s ease-out, padding-bottom 0.4s ease-out, margin-top 0.4s ease-out, opacity 0.3s ease-out; max-height: 50000px; /* Effectively unlimited */ padding-top: 15px; padding-bottom: 15px; opacity: 1; }}
+        .section-content {{ padding-left: 10px; border-left: 3px solid #f0f0f0; margin-top: 15px; overflow: hidden; transition: max-height 0.4s ease-out, padding-top 0.4s ease-out, padding-bottom 0.4s ease-out, margin-top 0.4s ease-out, opacity 0.3s ease-out; max-height: 50000px; /* Set high max-height for animation */ padding-top: 15px; padding-bottom: 15px; opacity: 1; }}
         .section-content.collapsed {{ max-height: 0; padding-top: 0; padding-bottom: 0; margin-top: 0; border-left-color: transparent; visibility: hidden; opacity: 0; transition: max-height 0.3s ease-in, visibility 0s 0.3s, opacity 0.2s ease-in, padding-top 0.3s ease-in, padding-bottom 0.3s ease-in, margin-top 0.3s ease-in, border-left-color 0.3s ease-in; }}
         /* End Collapsible */
         .footnotes {{ margin-top: 40px; border-top: 1px solid #eee; padding-top: 15px; font-size: 0.85em; color: #555; }}
@@ -345,7 +359,7 @@ def generate_full_html_profile(company_name, sections, section_contents, app_ver
             a {{ text-decoration: none; color: #000; }}
             .toc, .no-print, .print-button, .toggle-indicator {{ display: none; }}
             .section {{ page-break-inside: avoid; }}
-            /* Ensure content is visible for printing */
+            /* Ensure collapsible content is visible when printing */
             .section-content {{ max-height: none !important; visibility: visible !important; opacity: 1 !important; border-left: none !important; padding-left: 0 !important; padding-top: 15px !important; padding-bottom: 15px !important; margin-top: 15px !important; }}
             .section-content.collapsed {{ max-height: none !important; visibility: visible !important; opacity: 1 !important; }} /* Override collapsed style for print */
             .footnotes {{ font-size: 8pt; }}
@@ -370,12 +384,12 @@ def generate_full_html_profile(company_name, sections, section_contents, app_ver
             <ul>
 """
 
-    # Add table of contents
+    # Build table of contents links
     toc_content = ""
     for section in sections:
         section_num = section["number"]
         section_title = section["title"]
-        # Escape section title in TOC
+        # Escape section title for safe inclusion in HTML
         toc_content += f'                <li><a href="#section-{section_num}">{section_num}. {html.escape(section_title)}</a></li>\n'
 
     toc_end = """            </ul>
@@ -397,61 +411,67 @@ def generate_full_html_profile(company_name, sections, section_contents, app_ver
         document.addEventListener('DOMContentLoaded', function() {
             const sectionHeaders = document.querySelectorAll('.content > .section > h2');
             sectionHeaders.forEach(header => {
-                // Ensure toggle indicator span exists or add one
+                // Ensure a toggle indicator span exists or add one dynamically.
                 let indicator = header.querySelector('.toggle-indicator');
                 if (!indicator) {
                     indicator = document.createElement('span');
                     indicator.className = 'toggle-indicator no-print';
-                    // Check if the content div (if exists) is already collapsed by default
-                    const contentWrapper = header.nextElementSibling; // Assumes content div is immediate sibling
+                    // Check if the associated content div (if it exists) is already collapsed by default.
+                    const contentWrapper = header.nextElementSibling; // Assumes content div is the immediate sibling initially.
                     const isInitiallyCollapsed = contentWrapper && contentWrapper.classList.contains('section-content') && contentWrapper.classList.contains('collapsed');
-                    indicator.innerHTML = isInitiallyCollapsed ? '▶' : '▼'; // Set initial state
+                    indicator.innerHTML = isInitiallyCollapsed ? '▶' : '▼'; // Set initial indicator state (▶ for collapsed, ▼ for expanded).
                     header.appendChild(indicator);
                 }
 
-                // Find the corresponding content wrapper (might not be immediate sibling if structure varies)
+                // Find the corresponding content wrapper; it might not be the immediate sibling if structure varies.
                 let contentWrapper = null;
                 let nextElem = header.nextElementSibling;
                 while(nextElem && !nextElem.matches('h2') && !nextElem.classList.contains('footnotes')) {
                      if (nextElem.classList.contains('section-content')) {
                          contentWrapper = nextElem;
-                         break;
+                         break; // Found the content wrapper for this header.
                      }
-                     nextElem = nextElem.nextElementSibling;
+                     nextElem = nextElem.nextElementSibling; // Check the next sibling.
                 }
 
-
-                // Add click listener to header only if content wrapper is found
+                // Add click listener to the header *only* if a corresponding content wrapper was found.
                 if (contentWrapper) {
                     header.addEventListener('click', function(event) {
-                        // Allow clicking links within H2 if needed, otherwise toggle
-                        // if (event.target.tagName !== 'A') { // Example check
+                        // Toggle the 'collapsed' class on the content wrapper and the header itself.
+                        // Update the indicator symbol based on the new state.
+                        // Note: This toggles on header click; could be modified to ignore clicks on links within H2 (see commented example).
+                        // if (event.target.tagName !== 'A') {
                             const isCollapsed = contentWrapper.classList.toggle('collapsed');
                             header.classList.toggle('collapsed', isCollapsed);
                             indicator.innerHTML = isCollapsed ? '▶' : '▼';
                         // }
                     });
                 } else {
-                     // Optionally hide indicator if no content found
+                     // If no content wrapper is found for this header, hide the toggle indicator.
                      indicator.style.display = 'none';
                 }
             });
 
-            // Automatically wrap content after H2 if no .section-content div exists
+            // --- Dynamic Content Wrapping (Post-Generation Fix) ---
+            // Automatically wrap content following an H2 within a .section-content div
+            // if one doesn't already exist. This handles cases where repair might have missed it.
              const sections = document.querySelectorAll('.content > .section');
              sections.forEach(section => {
                 const header = section.querySelector('h2');
-                if (!header) return;
+                if (!header) return; // Skip if no header found in section.
                 let contentWrapper = section.querySelector('.section-content');
 
+                // If no pre-existing .section-content div is found within this section...
                 if (!contentWrapper) {
                     console.log('Wrapping content for section:', header.textContent.trim());
                     contentWrapper = document.createElement('div');
-                    contentWrapper.className = 'section-content'; // Add collapsed by default? .collapsed
+                    contentWrapper.className = 'section-content'; // Create the wrapper div.
+                    // Add 'collapsed' class here if sections should start collapsed by default.
                     let currentElement = header.nextElementSibling;
                     const elementsToWrap = [];
+                    // Collect all sibling elements after the header until the next section's H2 or the footnotes div.
                     while (currentElement) {
-                       // Stop wrapping if we hit the next section's H2 or footnotes div
+                        // Stop collecting if we hit the start of the next section or the footnotes.
                         if ((currentElement.tagName === 'H2' && currentElement.parentNode.classList.contains('section')) || currentElement.classList.contains('footnotes')) {
                            break;
                         }
@@ -459,21 +479,25 @@ def generate_full_html_profile(company_name, sections, section_contents, app_ver
                         currentElement = currentElement.nextElementSibling;
                     }
 
+                    // If elements were found to wrap...
                     if (elementsToWrap.length > 0) {
+                        // Move the collected elements inside the new wrapper div.
                         elementsToWrap.forEach(el => contentWrapper.appendChild(el));
-                        // Insert the wrapper right after the header
+                        // Insert the new wrapper div immediately after the header in the DOM.
                         header.parentNode.insertBefore(contentWrapper, header.nextSibling);
-                        // Re-query indicator and add click listener now that wrapper exists
+
+                        // Re-query the indicator (should exist from the earlier loop) and add the click listener now that the wrapper exists.
                         let indicator = header.querySelector('.toggle-indicator');
-                        if(indicator) { // Assumes indicator was added earlier
-                           header.addEventListener('click', function(event) {
+                        // Assumes indicator was added earlier even if content wrapper wasn't found initially.
+                        if(indicator) {
+                           header.addEventListener('click', function(event) { // Re-attach listener specifically for dynamically wrapped content
                               const isCollapsed = contentWrapper.classList.toggle('collapsed');
                               header.classList.toggle('collapsed', isCollapsed);
                               indicator.innerHTML = isCollapsed ? '▶' : '▼';
                            });
                         }
                     } else {
-                       // If no content was found to wrap, maybe hide indicator
+                       // If no content elements were found between this header and the next section/footnotes, hide the indicator.
                        let indicator = header.querySelector('.toggle-indicator');
                        if(indicator) indicator.style.display = 'none';
                     }
@@ -487,69 +511,67 @@ def generate_full_html_profile(company_name, sections, section_contents, app_ver
 
     full_profile = html_head + toc_content + toc_end
 
-    # Add each section's HTML content
+    # Append each processed section's HTML content
     for i, content_html in enumerate(section_contents):
         section_num = sections[i]['number'] if i < len(sections) else 'Unknown'
         section_title = sections[i]['title'] if i < len(sections) else 'Unknown Section'
         escaped_section_title = html.escape(section_title)
 
         if content_html and isinstance(content_html, str):
-             # Basic check if the content *looks* like a section div
+             # Basic check if the content *looks* like it has the main section div wrapper.
              if not re.search(r'<div\s+[^>]*?class=["\']section["\']', content_html, re.IGNORECASE):
                   print(f"HTML Generator Warning: Section {section_num} content missing outer div wrapper - attempting to wrap.")
-                  # Wrap the potentially broken content
+                  # Wrap the potentially broken content in a minimal error-indicating structure.
                   full_profile += f'<div class="section error-wrapper" id="section-{section_num}"><h2 class="error-header">{section_num}. {escaped_section_title}<span class="toggle-indicator no-print">▼</span></h2><div class="section-content"><p class="error">Warning: Content wrapper missing, attempting recovery:</p>{content_html}</div></div>\n'
              else:
-                  # Add the presumably valid section content
+                  # Append the presumably valid/repaired section content.
                   full_profile += content_html + "\n"
         else:
-             # Handle missing or invalid content type
+             # Handle cases where section content is missing or not a string.
              full_profile += f'<div class="section" id="section-{section_num}"><h2 class="error-header">{section_num}. {escaped_section_title}<span class="toggle-indicator no-print">▼</span></h2><div class="section-content"><p class="error">Error: Section content was missing or empty.</p></div></div>\n'
 
 
     full_profile += html_foot
-    # Final cleanup just in case (should be less needed with better cleaning/repair)
+    # Final cleanup for any stray code fences (should be less needed with earlier cleaning/repair).
     full_profile = full_profile.replace('```html', '').replace('```', '')
     return full_profile
 
 
 def extract_text_from_html(html_content):
-    """Extract plain text from HTML content, robustly."""
+    """Extracts plain text from HTML content, attempting to preserve some structure."""
     if not isinstance(html_content, str):
         return ""
 
     try:
-        # 1. Remove script and style blocks and their content
+        # 1. Remove script and style blocks entirely.
         text = re.sub(r'<(script|style).*?</\1>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
 
-        # 2. Replace common block-level tags with newlines BEFORE tag removal
-        # This helps preserve paragraph structure better. Add more tags as needed.
+        # 2. Replace common block-level tags with newlines *before* removing all tags.
+        # This helps preserve paragraph/list/table structure.
         text = re.sub(r'</(p|div|li|h[1-6]|tr|table|thead|tbody|th|td)>\s*', '\n', text, flags=re.IGNORECASE)
-        # Add newline for <br> as well
+        # Also treat <br> tags as newlines.
         text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
 
-        # 3. Remove all remaining HTML tags
-        text = re.sub(r'<[^>]+>', ' ', text) # Replace tags with a space
+        # 3. Remove all remaining HTML tags, replacing them with a space to avoid merging words.
+        text = re.sub(r'<[^>]+>', ' ', text)
 
-        # 4. Decode HTML entities (like &amp;, &lt;, etc.)
+        # 4. Decode HTML entities (like &amp;, &lt;, &nbsp;).
         try:
             text = html.unescape(text)
         except Exception as e_unescape:
-            print(f"HTML Text Extraction Warning: html.unescape failed: {e_unescape}. Proceeding without full unescaping.")
-            # Basic manual replacements as fallback
+            print(f"HTML Text Extraction Warning: html.unescape failed: {e_unescape}. Proceeding with basic replacements.")
+            # Basic manual replacements as a fallback. Order matters, especially for ampersand.
             text = text.replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'").replace('&nbsp;', ' ').replace('&amp;', '&') # Ampersand last
 
-        # 5. Normalize whitespace
-        text = re.sub(r'[ \t]+', ' ', text) # Replace multiple spaces/tabs with single space
-        text = re.sub(r'\n\s*\n+', '\n\n', text) # Collapse multiple newlines to max two
-        text = text.strip() # Remove leading/trailing whitespace
+        # 5. Normalize whitespace.
+        text = re.sub(r'[ \t]+', ' ', text) # Replace multiple spaces/tabs with a single space.
+        text = re.sub(r'\n\s*\n+', '\n\n', text) # Collapse multiple consecutive newlines into max two.
+        text = text.strip()
 
         return text
 
     except Exception as e:
         print(f"HTML Text Extraction Error: {e}")
         traceback.print_exc()
-        # Return original content or error marker if extraction fails badly
+        # Return an error marker if extraction fails significantly.
         return "[Error extracting text from HTML]"
-
-# Ensure unused schema functions (if they existed) are removed below this line.

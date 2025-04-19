@@ -8,7 +8,7 @@ import time
 import re
 import json
 import jsonschema
-import traceback # Import traceback for detailed errors
+import traceback # Used for providing detailed error information in logs.
 
 # Use relative imports for modules within the src package
 from .api_client import cached_generate_content, create_insight_model
@@ -16,74 +16,109 @@ from .prompts import persona, analysis_specs, json_output_format
 from .section_definitions import sections, get_section_schema_string, get_section_template_string
 
 def _fix_common_schema_deviations(data):
-    """Recursively attempts to fix common, known schema deviations."""
+    """
+    Recursively traverses the generated JSON data and attempts to fix common,
+    predictable deviations from the expected schema. This acts as a pre-validation
+    step to increase the chances of successful schema validation.
+    """
     if isinstance(data, dict):
         new_dict = {}
         for key, value in data.items():
-            # --- Fix 1: Rename 'source_ref' to '_source_ref_id' ---
+            # Fix 1: Rename 'source_ref' (likely from LLM hallucination) to '_source_ref_id' (expected schema field).
             new_key = "_source_ref_id" if key == "source_ref" else key
-            # --- Add other simple fixes here if needed ---
-            # e.g., if key == "some_old_name": new_key = "some_new_name"
-            new_dict[new_key] = _fix_common_schema_deviations(value) # Recurse
+            # --- Add other simple, targeted fixes here if new common deviations are observed ---
+            # Example: if key == "some_old_name": new_key = "some_new_name"
+            new_dict[new_key] = _fix_common_schema_deviations(value) # Recurse for nested structures.
         return new_dict
     elif isinstance(data, list):
-        return [_fix_common_schema_deviations(item) for item in data] # Recurse
+        # Recurse into list items.
+        return [_fix_common_schema_deviations(item) for item in data]
     else:
-        return data # Return other types unchanged
+        # Return non-dict/list types unchanged.
+        return data
 
 def _validate_schema(section_schema):
-    """Validates that a section schema follows the required format."""
+    """
+    Validates that a provided section schema dictionary adheres to the
+    internal structural requirements, specifically checking the 'notes' field.
+    This is an internal sanity check, not validation of generated data against the schema.
+    """
     if not isinstance(section_schema, dict):
         raise ValueError("Section schema must be a dictionary")
-    
+
     def validate_object(obj):
+        """Inner helper function to recursively check objects within the schema."""
         if not isinstance(obj, dict):
             return
-        
-        # Check for notes field
+
+        # Check for the optional 'notes' field and its structure.
         if "notes" in obj:
             if not isinstance(obj["notes"], dict):
                 raise ValueError("Notes field must be a dictionary with type and description")
             if "type" not in obj["notes"] or "description" not in obj["notes"]:
                 raise ValueError("Notes field must contain type and description")
+            # Enforce that 'notes' allows string or null values.
             if obj["notes"]["type"] != ["string", "null"]:
                 raise ValueError("Notes field type must be ['string', 'null']")
-        
-        # Recursively validate nested objects
+
+        # Recursively validate nested objects and objects within lists.
         for value in obj.values():
             if isinstance(value, dict):
                 validate_object(value)
             elif isinstance(value, list) and value and isinstance(value[0], dict):
+                # If it's a list of objects, validate the structure of the first item
+                # assuming all items in the list follow the same structure.
                 validate_object(value[0])
-    
+
     validate_object(section_schema)
 
-# --- Function to Generate ONLY the Initial Section ---
+# --- Main Function for Initial Section Generation ---
 def generate_initial_section(section, documents, persona, analysis_specs, json_output_format, model):
     """
-    Generates and returns the initial JSON content for a single section.
-    Accepts a pre-configured model instance.
+    Generates the initial JSON content for a single specified section using an LLM.
+
+    This function orchestrates the process of:
+    1. Constructing a detailed prompt including section specs, documents, schema, and formatting instructions.
+    2. Calling the LLM via `cached_generate_content`.
+    3. Attempting to parse the LLM response as JSON.
+    4. Applying automatic fixes for known schema deviations (`_fix_common_schema_deviations`).
+    5. Validating the (potentially fixed) JSON against the section's specific schema.
+    6. Implementing a retry loop (`MAX_CORRECTION_ATTEMPTS`) with corrective prompts
+       if parsing or validation fails, or if the response is empty/blocked.
+
+    Args:
+        section (dict): The definition dictionary for the section to generate.
+        documents (list): A list of document content strings to be used as context.
+        persona (str): The persona string to guide the LLM's tone and style.
+        analysis_specs (str): General analysis specifications for the LLM.
+        json_output_format (str): Instructions on the expected JSON output format.
+        model: An initialized generative model instance (e.g., from `create_insight_model`).
+
+    Returns:
+        tuple: A tuple containing:
+            - section_num (int): The number of the processed section.
+            - result (dict): Either the validated JSON content for the section
+                             or a dictionary containing error details if generation failed.
     """
-    # Maximum number of correction attempts
+    # Maximum number of attempts to get valid JSON from the LLM.
     MAX_CORRECTION_ATTEMPTS = 3
-    
-    # Removed schema conversion and validation steps here as schema is now directly usable
-    
+
+    # --- Section Identification ---
     section_num = section["number"]
     section_title = section["title"]
     section_specs = section["specs"]
 
-    # Log entry into the function for this section
     print(f"Section Processor: Section {section_num}: GENERATING initial content for '{section_title}'")
 
-    # Variables to track across attempts
-    validated_json = None
-    final_result = None
-    correction_prompt = None
-    schema_str = get_section_schema_string(section_num)
-    template_str = get_section_template_string(section_num)
+    # --- State Variables for Retry Loop ---
+    validated_json = None # Stores the successfully validated JSON.
+    final_result = None   # Stores the final result (error or success).
+    correction_prompt = None # Stores the prompt used for retry attempts.
+    schema_str = get_section_schema_string(section_num) # Fetch schema string for the prompt.
+    template_str = get_section_template_string(section_num) # Fetch template string for the prompt.
 
-    # Construct the part of the prompt that presents the schema and example
+    # --- Construct Schema/Template Part of the Prompt ---
+    # This part explicitly tells the LLM the target structure and provides an example.
     schema_prompt_part = f"""
 TARGET JSON SCHEMA:
 ```json
@@ -99,13 +134,16 @@ EXAMPLE DESIRED JSON OUTPUT STRUCTURE (Use this structure, adapt content based o
 CRITICAL INSTRUCTION: Place the DETAILED analysis, narrative, context, and ALL extracted information requested by the section's `specs` that doesn't fit the specific schema fields directly into the `analysis_text` field. Cite sources using bracketed IDs `[refX]` within the `analysis_text` and populate the `footnotes` array accordingly. Use `notes` field within objects (if present in schema) for localized extra context.
 """
 
-    # Try multiple attempts to generate valid JSON
+    # --- Generation Attempt Loop ---
+    # Tries up to MAX_CORRECTION_ATTEMPTS times to generate valid, schema-compliant JSON.
     for attempt in range(MAX_CORRECTION_ATTEMPTS):
         print(f"Section Processor: Section {section_num}: Starting attempt {attempt + 1}/{MAX_CORRECTION_ATTEMPTS}")
-        
-        # If this is the first attempt or no correction prompt exists yet, use the initial instruction
+
+        # --- Prepare API Input ---
+        # On the first attempt, or if the last attempt didn't generate a correction prompt
+        # (e.g., due to an unexpected error), use the full initial instruction.
         if attempt == 0 or not correction_prompt:
-            # Construct the full prompt including the document list
+            # Construct the comprehensive initial prompt.
             section_instruction = f"""
 {persona}
 
@@ -125,44 +163,47 @@ IMPORTANT: Generate *only* valid JSON for section {section_num}. Do NOT include 
             api_input = [section_instruction] + documents
             print(f"Section Processor: Section {section_num}: Input prepared for initial attempt ({len(api_input)} parts)")
         else:
-            # Use the correction prompt from previous iteration
+            # On subsequent attempts, use the specific correction prompt generated
+            # based on the failure mode of the previous attempt.
             api_input = [correction_prompt] + documents
             print(f"Section Processor: Section {section_num}: Input prepared with correction prompt ({len(api_input)} parts)")
 
+        # --- Call LLM and Process Response ---
         try:
             print(f"Section Processor: Section {section_num}: Calling API (attempt {attempt + 1})")
 
-            # Check model validity
+            # Ensure a valid model object was passed.
             if not model:
                 raise ValueError("No valid model instance provided to generate_initial_section")
 
-            # Call the LLM
-            section_response = cached_generate_content(model, api_input, section_num=section_num, 
+            # Call the LLM API (using caching only on the first attempt).
+            section_response = cached_generate_content(model, api_input, section_num=section_num,
                                                      cache_enabled=(attempt == 0), timeout=300)
 
-            # Defensive check for response and text attribute
+            # --- Basic Response Validation ---
             if section_response is None:
                 raise ValueError("API response object was None.")
-                
-            # Check for feedback first, especially safety feedback
+
+            # Check for safety feedback/blocking *before* trying to access text.
             if hasattr(section_response, 'prompt_feedback') and section_response.prompt_feedback:
                 feedback = section_response.prompt_feedback
                 print(f"Section Processor: Section {section_num}: API Response Feedback: {feedback}")
                 if hasattr(feedback, 'block_reason') and feedback.block_reason:
+                    # If blocked, raise an error immediately to stop processing this section.
                     raise ValueError(f"Content blocked for section {section_num}. Reason: {feedback.block_reason}. Safety Ratings: {getattr(feedback, 'safety_ratings', 'N/A')}")
-                    
-            # Now check for text attribute
+
+            # Ensure the response object has the expected 'text' attribute.
             if not hasattr(section_response, 'text'):
                 raise ValueError("API response object is valid but missing 'text' attribute.")
 
             response_text = section_response.text
             print(f"Section Processor: Section {section_num}: API call complete (received {len(response_text)} chars)")
 
+            # --- Handle Empty Response ---
             if not response_text or not response_text.strip():
                 print(f"Section Processor: Section {section_num}: Warning - API returned empty content on attempt {attempt + 1}.")
-                
                 if attempt < MAX_CORRECTION_ATTEMPTS - 1:
-                    # Prepare correction prompt for empty response
+                    # Generate a correction prompt asking the LLM to try again as the response was empty.
                     correction_prompt = f"""
 {persona}
 
@@ -183,69 +224,69 @@ OUTPUT FORMATTING INSTRUCTIONS:
 IMPORTANT: Generate *only* valid JSON matching the exact schema above. Do NOT include any text before or after the JSON object.
 """
                     print(f"Section Processor: Section {section_num}: Prepared correction prompt for empty response.")
-                    continue
+                    continue # Move to the next attempt.
                 else:
-                    # Final attempt failed with empty response
+                    # If the final attempt also resulted in an empty response, record the error.
                     final_result = {
                         "error": "API returned empty content for this section after multiple attempts.",
                         "section_num": section_num,
                         "section_title": section_title
                     }
-                    break
-            
-            # Clean the raw text to remove potential markdown fences and whitespace
-            cleaned_text = response_text.strip() # Strip whitespace first
+                    break # Exit the loop.
+
+            # --- Clean and Prepare JSON String ---
+            # Remove leading/trailing whitespace and potential markdown code fences (```json ... ``` or ``` ... ```).
+            cleaned_text = response_text.strip()
             json_string_to_parse = None
 
-            # Try regex to find ```json ... ``` or ``` ... ```
+            # Use regex to extract content within JSON markdown fences if present.
             match = re.match(r'^```(?:json)?\s*(.*?)\s*```$', cleaned_text, re.DOTALL | re.IGNORECASE)
             if match:
                 json_string_to_parse = match.group(1).strip()
                 print(f"Section {section_num}: Removed markdown fences via regex. Attempting parse.")
             else:
-                # Fallback: If no fences match, check if it starts like JSON
+                # If no fences, check if it looks like a basic JSON object.
                 if cleaned_text.startswith('{') and cleaned_text.endswith('}'):
                     json_string_to_parse = cleaned_text
                     print(f"Section {section_num}: No markdown fences found, but looks like JSON. Attempting parse.")
                 else:
-                    # If it doesn't start like JSON either, it's likely invalid
+                    # If it doesn't look like JSON, assume it's invalid non-JSON text.
                     print(f"Section {section_num}: No markdown fences found and doesn't start with {{. Assuming invalid content.")
-                    # Raise a specific error or let the json.loads handle it below, 
-                    # but set string so the error message includes the (likely non-JSON) text
-                    json_string_to_parse = cleaned_text 
-            
-            # Try to parse the JSON response
+                    # Assign the cleaned text so the JSONDecodeError below includes the problematic text.
+                    json_string_to_parse = cleaned_text
+
+            # --- Parse and Validate JSON ---
             try:
-                # Use the cleaned string here
+                # Attempt to parse the extracted/cleaned string as JSON.
                 parsed_json = json.loads(json_string_to_parse)
                 print(f"Section {section_num}: Successfully parsed JSON on attempt {attempt + 1}.")
-                
-                # Apply automatic schema deviation fixes
+
+                # --- Apply Automatic Schema Fixes ---
                 try:
                     print(f"Section {section_num}: Attempting automatic schema deviation fixes...")
                     parsed_json = _fix_common_schema_deviations(parsed_json)
                     print(f"Section {section_num}: Automatic fixes applied (if any).")
                 except Exception as fix_err:
+                    # Log errors during fixing but continue with the potentially un-fixed JSON.
                     print(f"Section {section_num}: Error during automatic fixing: {fix_err}")
-                    # Continue with potentially un-fixed JSON
-                
-                # Validate JSON against schema
+
+                # --- Schema Validation ---
                 try:
-                    # Retrieve the correct schema for the current section
+                    # Retrieve the authoritative schema for this section.
                     current_schema = section['schema']
-                    # Validate the parsed JSON against the schema
+                    # Validate the (potentially fixed) parsed JSON against the schema.
                     jsonschema.validate(instance=parsed_json, schema=current_schema)
                     print(f"Section {section_num}: JSON validation SUCCESSFUL on attempt {attempt + 1}.")
-                    
-                    # Store successful result and exit loop
+
+                    # Store the valid JSON and exit the retry loop.
                     validated_json = parsed_json
-                    break
-                    
+                    break # Success!
+
                 except jsonschema.ValidationError as validation_error:
+                    # --- Handle Validation Failure ---
                     print(f"Section {section_num}: JSON validation FAILED on attempt {attempt + 1}. Error: {validation_error.message}")
-                    
                     if attempt < MAX_CORRECTION_ATTEMPTS - 1:
-                        # Prepare correction prompt for validation error
+                        # Generate a correction prompt detailing the validation error and showing the invalid JSON.
                         correction_prompt = f"""
 {persona}
 
@@ -269,23 +310,25 @@ OUTPUT FORMATTING INSTRUCTIONS:
 IMPORTANT: Ensure the regenerated output is *only* the valid JSON object, adhering strictly to the schema and instructions. Be concise to avoid token limits.
 """
                         print(f"Section {section_num}: Prepared correction prompt for validation error.")
-                        continue
+                        continue # Move to the next attempt.
                     else:
-                        # Final attempt failed validation
+                        # If validation fails on the final attempt, record the error.
                         final_result = {
-                            "error": "JSON Validation Failed after multiple attempts", 
+                            "error": "JSON Validation Failed after multiple attempts",
                             "message": validation_error.message,
                             "section_num": section_num,
                             "section_title": section_title,
-                            "parsed_json": parsed_json  # Include the parsed but invalid JSON for debugging
+                            "parsed_json": parsed_json # Include the invalid JSON for debugging.
                         }
                         print(f"Section {section_num}: JSON validation failed after {MAX_CORRECTION_ATTEMPTS} attempts.")
-                        time.sleep(1)  # Short pause before continuing
-                
+                        time.sleep(1) # Short pause before potentially processing the next section.
+                        break # Exit loop
+
             except json.JSONDecodeError as json_error:
+                # --- Handle JSON Parsing Failure ---
                 print(f"Section {section_num}: JSON parsing FAILED on attempt {attempt + 1}. Error: {json_error}")
                 if attempt < MAX_CORRECTION_ATTEMPTS - 1:
-                    # Prepare correction prompt for JSON parsing error
+                    # Generate a correction prompt indicating a JSON parsing error and showing the problematic text.
                     correction_prompt = f"""
 {persona}
 
@@ -309,39 +352,44 @@ OUTPUT FORMATTING INSTRUCTIONS:
 IMPORTANT: Ensure the regenerated output is *only* the valid JSON object, adhering strictly to the schema and instructions. Remove any introductory text, comments, or markdown fences. Be concise.
 """
                     print(f"Section {section_num}: Prepared correction prompt for JSON parsing error.")
-                    continue
+                    continue # Move to the next attempt.
                 else:
-                    # Final attempt failed parsing
+                    # If parsing fails on the final attempt, record the error.
                     final_result = {
                         "error": "JSON Parsing Failed after multiple attempts",
                         "error_details": str(json_error),
+                        # Include the start of the raw text for debugging.
                         "raw_text": response_text[:500] + ('...' if len(response_text) > 500 else ''),
                         "section_num": section_num,
                         "section_title": section_title
                     }
                     print(f"Section {section_num}: JSON parsing failed after {MAX_CORRECTION_ATTEMPTS} attempts.")
-                    time.sleep(1)  # Short pause before continuing
+                    time.sleep(1) # Short pause.
+                    break # Exit loop
 
         except TimeoutError as e:
+            # --- Handle API Timeout ---
             error_msg = f"TIMEOUT generating Section {section_num} on attempt {attempt + 1}: {str(e)}"
             print(f"Section Processor: {error_msg}")
-            
             if attempt < MAX_CORRECTION_ATTEMPTS - 1:
                 print(f"Section Processor: Section {section_num}: Retrying after timeout (attempt {attempt + 2}).")
-                continue
+                # No specific correction prompt needed, just retry with the last used prompt (or initial if first attempt).
+                continue # Move to the next attempt.
             else:
+                # If timeout occurs on the final attempt, record the error.
                 final_result = {
                     "error": f"Processing timed out for section {section_num} after multiple attempts.",
                     "section_num": section_num,
                     "section_title": section_title
                 }
-                break
+                break # Exit loop
 
-        except ValueError as api_error: # Catch ValueErrors from API response issues
+        except ValueError as api_error:
+            # --- Handle Specific API/Response ValueErrors (e.g., None response, missing text, blocked content) ---
             print(f"Section Processor: Section {section_num}: Error processing API response on attempt {attempt+1}: {api_error}")
-            print(f"Detailed Traceback:\n{traceback.format_exc()}")
+            print(f"Detailed Traceback:\n{traceback.format_exc()}") # Log traceback for debugging.
             if attempt < MAX_CORRECTION_ATTEMPTS - 1:
-                # Prepare correction prompt for general API/response error
+                # Generate a generic correction prompt asking the LLM to try again, focusing on adherence to instructions.
                 correction_prompt = f"""
 {persona}
 
@@ -360,49 +408,49 @@ OUTPUT FORMATTING INSTRUCTIONS:
 IMPORTANT: Generate *only* valid JSON matching the exact schema above. Ensure content adheres to safety policies and all formatting instructions. Be concise.
 """
                 print(f"Section Processor: Section {section_num}: Prepared correction prompt for API/response error.")
-                continue
+                continue # Move to the next attempt.
             else:
+                # If this error occurs on the final attempt, record it.
                 final_result = {
                     "error": f"Could not generate initial content: {type(api_error).__name__}",
                     "error_details": str(api_error),
                     "section_num": section_num,
                     "section_title": section_title
                 }
-                break
+                break # Exit loop
 
         except Exception as e:
+            # --- Handle Unexpected Errors ---
             error_msg = f"UNEXPECTED ERROR generating Section {section_num} on attempt {attempt + 1}: {type(e).__name__} - {str(e)}"
             print(f"Section Processor: {error_msg}")
-            traceback.print_exc()
-            
+            traceback.print_exc() # Print stack trace for unexpected errors.
             if attempt < MAX_CORRECTION_ATTEMPTS - 1:
                 print(f"Section Processor: Section {section_num}: Retrying after unexpected error (attempt {attempt + 2}).")
-                continue
+                # No specific correction prompt, retry with the last used prompt.
+                continue # Move to the next attempt.
             else:
+                # If an unexpected error occurs on the final attempt, record it.
                 final_result = {
                     "error": f"Could not generate initial content: {type(e).__name__}",
                     "error_details": str(e),
                     "section_num": section_num,
                     "section_title": section_title
                 }
-                break
+                break # Exit loop
 
-    # After the loop, check if we have a validated result
+    # --- Determine Final Result ---
     if validated_json is not None:
+        # Success: Return the validated JSON.
         print(f"Section Processor: Section {section_num}: Successfully generated valid JSON content.")
         return section_num, validated_json
     else:
-        # Return the final error state if no valid JSON was generated
+        # Failure: Return the error details captured in final_result.
         print(f"Section Processor: Section {section_num}: Failed to generate valid JSON after {MAX_CORRECTION_ATTEMPTS} attempts.")
+        # If final_result wasn't set due to an unexpected loop exit (shouldn't happen), create a generic error.
+        if final_result is None:
+             final_result = {
+                "error": f"Unknown error prevented generation for section {section_num} after {MAX_CORRECTION_ATTEMPTS} attempts.",
+                "section_num": section_num,
+                "section_title": section_title
+            }
         return section_num, final_result
-
-
-# --- Refinement Function (Kept structurally but not called by app.py) ---
-# def refine_section_content(section, initial_content, documents, persona, analysis_specs, output_format):
-#    """Performs Fact and Insight refinement sequence on initial content."""
-#    # ... (Keep internal logic but ensure it doesn't rely on removed globals/timers)
-#    # ... (This function would need 'documents' passed if activated)
-#    print(f"Section Processor: refine_section_content called for section {section['number']} (Currently Inactive in Gradio App)")
-#    # Return initial content for now if called accidentally
-#    return initial_content
-# --- END OF FILE src/section_processor.py ---
