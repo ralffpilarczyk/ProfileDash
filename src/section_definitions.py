@@ -33,9 +33,9 @@ def add_standard_fields(schema_dict):
     if 'required' in schema_dict:
          # Avoid adding duplicates if already present
          if 'analysis_text' not in schema_dict['required']:
-             schema_dict['required'].append('analysis_text')
+             schema_dict['required'].append('analysis_text') # Indented
          if 'footnotes' not in schema_dict['required']:
-            schema_dict['required'].append('footnotes')
+             schema_dict['required'].append('footnotes') # Indented
     else:
          schema_dict['required'] = ['analysis_text', 'footnotes']
 
@@ -79,7 +79,7 @@ sections = [
         "specs": "Extract data on the total number of employees and their locations, including any available breakdowns (e.g., by region, function). Specify the 'as of' date for employee counts.\n"
                  "Extract data on main operating assets, including their categories (e.g., Manufacturing Plants, Offices, R&D Centers), specific asset names/descriptions, locations (city and country), and ownership status (owned or leased). Specify the 'as of' date for asset information.\n"
                  "Include any relevant quantitative metrics for assets (e.g., production capacity, square footage, book value), clearly specifying units and the 'as of' date.\n"
-                 "Provide the detailed analysis and findings in the 'analysis_text' field. Use footnotes for specific sources.",
+                 "Provide the detailed analysis and findings in the 'analysis_text' field. **Within the analysis_text, also discuss the significance of the footprint, including geographic concentration/diversification, the strategic importance of key locations, and the implications of the asset mix (e.g., owned vs. leased). Where possible based on the documents, comment on how this footprint might support the company's main Products/Services (Section 2) or Strategic Objectives (Section 13).** Use footnotes for specific sources.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -118,11 +118,11 @@ sections = [
     {
         "number": 2,
         "title": "Products and Services",
-        "specs": "Extract a list of key product/service categories and individual products/services within each category.\n"
-                 "For each major category and product, extract its value proposition from the customer perspective and any stated competitive advantages.\n"
-                 "Capture available performance metrics (e.g., revenue contribution percentage, market share, growth rate) for major categories and products, specifying the 'as of' date or period for each metric.\n"
-                 "Extract information on product lifecycle stage (e.g., Growth, Mature, Decline) and market positioning (e.g., Premium, Mid-Market, Low-Cost) if available.\n"
-                 "Provide the detailed analysis and findings in the 'analysis_text' field. Use footnotes for specific sources.",
+        "specs": "Extract a list of key product/service categories and individual products/services within each category.\\n"
+                 "For each major category and product, extract its value proposition from the customer perspective and any stated competitive advantages.\\n"
+                 "Capture available performance metrics (e.g., revenue contribution percentage, market share, growth rate) for major categories and products, specifying the \'as of\' date or period for each metric.\\n"
+                 "Extract information on product lifecycle stage (e.g., Growth, Mature, Decline) and market positioning (e.g., Premium, Mid-Market, Low-Cost) if available.\\n"
+                 "Provide the detailed analysis and findings in the \'analysis_text\' field. **Within the analysis_text, also: analyze the overall product portfolio mix (e.g., diversification, reliance on growth vs. mature products); evaluate the alignment between value propositions/advantages and performance metrics; discuss implications of lifecycle stages/positioning. Where possible based on documents, comment on which Key Customers (Section 3) are served by major products, how products compare to Key Competitors (Section 5), and if specific Operating Footprint assets (Section 1) support certain product lines.** Use footnotes for specific sources. IMPORTANT: Ensure all source citations within \'analysis_text\' use the format `[refX]` (e.g., `[ref1]`, `[ref2]`) and that each `refX` has a corresponding detailed entry in the main \'footnotes\' array following the standard schema.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -156,11 +156,11 @@ sections = [
     {
         "number": 3,
         "title": "Key Customers",
-        "specs": "Extract data on customer concentration (% revenue from top 1, 5, 10 customers) with dates.\n"
-                 "Extract the Company's stated position in the value chain.\n"
-                 "Extract a list of the largest customers identified by name.\n"
-                 "For key customers, extract relationship details, revenue contribution, products purchased, and segmentation if available.\n"
-                 "Provide the detailed analysis and findings in the 'analysis_text' field. Use footnotes for specific sources.",
+        "specs": "Extract data on customer concentration (% revenue from top 1, 5, 10 customers) with dates.\\n"
+                 "Extract the Company's stated position in the value chain.\\n"
+                 "Extract a list of the largest customers identified by name.\\n"
+                 "For key customers, extract relationship details, revenue contribution, products purchased, and segmentation if available.\\n"
+                 "Provide the detailed analysis and findings in the 'analysis_text' field. **Within the analysis_text, also: analyze potential risks/benefits of customer concentration; evaluate stability/risks of key customer relationships; discuss implications of the value chain position. Where possible based on documents, discuss how products purchased align with core offerings (Section 2), note any competitive dynamics related to these customers (Section 5), and analyze how Strengths/Weaknesses (Sections 15/16) might impact these relationships.** Use footnotes for specific sources.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -198,12 +198,12 @@ sections = [
      {
         "number": 4,
         "title": "Key Suppliers",
-        "specs": "Extract data on supplier concentration (% COGS from top 1, 5, 10 suppliers) with dates.\n"
-                 "Identify specific supplier risks mentioned and mitigation efforts.\n"
-                 "Extract the Company's stated business model and value chain position/margin capture.\n"
-                 "Extract a list of the largest suppliers identified by name.\n"
-                 "For key suppliers, extract relationship details, COGS contribution, materials provided, and segmentation if available.\n"
-                 "Provide the detailed analysis and findings in the 'analysis_text' field. Use footnotes for specific sources.",
+        "specs": "Extract data on supplier concentration (% COGS from top 1, 5, 10 suppliers) with dates.\\n"
+                 "Identify specific supplier risks mentioned and mitigation efforts.\\n"
+                 "Extract the Company's stated business model and value chain position/margin capture.\\n"
+                 "Extract a list of the largest suppliers identified by name.\\n"
+                 "For key suppliers, extract relationship details, COGS contribution, materials provided, and segmentation if available.\\n"
+                 "Provide the detailed analysis and findings in the 'analysis_text' field. **Within the analysis_text, also: analyze potential risks/benefits of supplier concentration; evaluate the effectiveness/limitations of risk mitigation efforts; discuss implications of the business model/value chain position on supplier relationships; assess the stability/importance/vulnerabilities in key supplier relationships. Where possible based on documents, discuss how supplied materials link to core Products/Services (Section 2), analyze geographic risks/synergies between supplier locations and the Operating Footprint (Section 1), discuss how Strengths/Weaknesses (Sections 15/16) affect supplier dynamics, and consider if supplier issues relate to Strategic Constraints (Section 14).** Use footnotes for specific sources.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -248,11 +248,11 @@ sections = [
     {
         "number": 5,
         "title": "Key Competitors",
-        "specs": "Extract market overview data (size, growth, company share) with dates.\n"
-                 "Identify key market segments and company/competitor share within them.\n"
-                 "Extract a list of key competitors by name.\n"
-                 "For each competitor, extract overview details, market share/trends, positioning, areas of competition/strength, and recent strategic moves.\n"
-                 "Provide the detailed analysis and findings in the 'analysis_text' field. Use footnotes for specific sources.",
+        "specs": "Extract market overview data (size, growth, company share) with dates.\\n"
+                 "Identify key market segments and company/competitor share within them.\\n"
+                 "Extract a list of key competitors by name.\\n"
+                 "For each competitor, extract overview details, market share/trends, positioning, areas of competition/strength, and recent strategic moves.\\n"
+                 "Provide the detailed analysis and findings in the 'analysis_text' field. **Within the analysis_text, also: analyze the company's overall competitive standing; assess the intensity of competition in key segments; discuss the potential impact of competitors' strategic moves; evaluate if the company is gaining/losing ground relative to peers. Where possible based on documents, compare the company's Strengths/Weaknesses (Sections 15/16) against competitors', relate the competitive product landscape to the company's Products/Services (Section 2), and analyze how competitor actions might represent Opportunities/Threats (Sections 17/18) for the company.** Use footnotes for specific sources.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -284,12 +284,12 @@ sections = [
     {
         "number": 6,
         "title": "Operational KPIs",
-        "specs": "Extract operational KPIs contributing to cash flow (market share, volumes, prices, customer activity, industry-specific metrics).\n"
-                 "Provide data for last 3 years + recent YTD if available.\n"
-                 "Include company forecasts/guidance for these KPIs.\n"
-                 "Include competitor benchmarks if available.\n"
-                 "Extract relevant MDNA (trends, achievements, challenges, disconnects) specifically about these KPIs.\n"
-                 "Provide detailed findings in 'analysis_text'. Present key KPIs in a structured list.",
+        "specs": "Extract operational KPIs contributing to cash flow (market share, volumes, prices, customer activity, industry-specific metrics).\\n"
+                 "Provide data for last 3 years + recent YTD if available.\\n"
+                 "Include company forecasts/guidance for these KPIs.\\n"
+                 "Include competitor benchmarks if available.\\n"
+                 "Extract relevant MDNA (trends, achievements, challenges, disconnects) specifically about these KPIs.\\n"
+                 "Provide detailed findings in 'analysis_text'. **Within the analysis_text, also: analyze the drivers behind key KPI trends; evaluate the sustainability of positive trends or severity of negative trends/challenges; analyze reasons for any MDNA disconnects. Where possible based on documents, discuss how these KPI trends likely impact financial performance (Sections 7 & 8), align with or diverge from Strategic Objectives (Section 13), and affect Competitive Positioning (Section 5).** Present key KPIs in a structured list in the 'key_kpi_data' field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -350,13 +350,14 @@ sections = [
     {
         "number": 7,
         "title": "Summary Financials (Consolidated)",
-        "specs": "Extract key consolidated financial metrics (Revenue, EBITDA, OpInc, NetInc, Capex, Cash Conversion) for last 3 years and recent quarters.\n"
-                 "Include GAAP and adjusted measures if provided, detailing adjustments.\n"
-                 "Extract forecasts/guidance for these metrics.\n"
-                 "List material one-time items.\n"
-                 "Include commentary on performance vs industry.\n"
-                 "Extract relevant MDNA (trends, achievements, challenges, disconnects).\n"
-                 "Provide detailed analysis in 'analysis_text', key figures in structured tables.",
+        "specs": "Extract key consolidated financial metrics (Revenue, EBITDA, OpInc, NetInc, Capex, Cash Conversion). \\n"
+                 "**Extract data for the three most recent full financial years (e.g., FY2023, FY2022, FY2021) and the five most recent reported quarters (e.g., Q1 2024, Q4 2023, Q3 2023, Q2 2023, Q1 2023), where available.**\\n"
+                 "Include GAAP and adjusted measures if provided, detailing adjustments.\\n"
+                 "Extract forecasts/guidance for these metrics.\\n"
+                 "List material one-time items.\\n"
+                 "Include commentary on performance vs industry.\\n"
+                 "Extract relevant MDNA (trends, achievements, challenges, disconnects).\\n"
+                 "Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: analyze earnings quality (considering one-offs/adjustments); evaluate sustainability of key trends (revenue, margins, profitability); assess cash flow generation profile; discuss capital efficiency (e.g., ROIC); evaluate guidance credibility. Where possible based on documents, explicitly link consolidated trends to Operational KPIs (Section 6) and Segment Performance (Section 8), and analyze how financial performance reflects Strategy/SWOT (Sections 13-18).** Key figures should be presented in the structured fields.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -368,13 +369,14 @@ sections = [
                         "properties": {
                             "metric_name": {"type": "string"},
                             "unit": {"type": "string"},
-                            # Dynamically add years as keys e.g., "FY2023": value
+                            "_source_ref_id": {"type": ["string", "null"]}, # Optional source for the row
+                            "notes": {"type": ["string", "null"]}      # Optional notes for the row
                         },
                         "patternProperties": {
                              "^(FY\\d{4})$": {"type": ["number", "string", "null"]} # Key for Year
                         },
                         "required": ["metric_name", "unit"],
-                         "additionalProperties": {"type": ["number", "string", "null", "object"]} # Allow _source_ref_id etc.
+                         "additionalProperties": False # Disallow other top-level keys in items
                     }
                 },
                 "quarterly_financials_summary": {
@@ -385,12 +387,14 @@ sections = [
                         "properties": {
                             "metric_name": {"type": "string"},
                             "unit": {"type": "string"},
+                            "_source_ref_id": {"type": ["string", "null"]},
+                            "notes": {"type": ["string", "null"]}
                         },
                         "patternProperties": {
                             "^(Q[1-4]_\\d{4})$": {"type": ["number", "string", "null"]} # Key for Quarter
                         },
                         "required": ["metric_name", "unit"],
-                        "additionalProperties": {"type": ["number", "string", "null", "object"]}
+                        "additionalProperties": False
                     }
                 },
                 "key_adjusted_metrics": {
@@ -439,11 +443,11 @@ sections = [
                               "metric_name": {"type": "string"},
                               "period": {"type": "string"},
                               "guidance_range": {"type": "string"},
-                              "unit": {"type": "string"},
+                              "unit": {"type": ["string", "null"]}, # Allow null for unit
                               "_source_ref_id": {"type": ["string", "null"]},
                               "notes": {"type": ["string", "null"]}
                          },
-                        "required": ["metric_name", "period", "guidance_range", "unit"],
+                        "required": ["metric_name", "period", "guidance_range"], # Unit is no longer strictly required if null allowed
                         "additionalProperties": False
                      }
                 },
@@ -453,14 +457,14 @@ sections = [
         }),
         "template": {
             "annual_financials_summary": [
-                 {"metric_name": "Revenue", "unit": "M USD", "FY2021": 3562.5, "FY2022": 4008.7, "FY2023": 4572.3, "_source_ref_id": "ref1"},
-                 {"metric_name": "EBITDA", "unit": "M USD", "FY2021": 748.1, "FY2022": 865.9, "FY2023": 1028.8, "_source_ref_id": "ref1"},
-                 {"metric_name": "Net Income", "unit": "M USD", "FY2021": 210.4, "FY2022": 285.6, "FY2023": 390.1, "_source_ref_id": "ref1"},
-                 {"metric_name": "Capex", "unit": "M USD", "FY2021": 180.2, "FY2022": 205.3, "FY2023": 221.5, "_source_ref_id": "ref1"}
+                 {"metric_name": "Revenue", "unit": "M USD", "FY2023": 4572.3, "FY2022": 4008.7, "FY2021": 3562.5, "_source_ref_id": "ref1"},
+                 {"metric_name": "EBITDA", "unit": "M USD", "FY2023": 1028.8, "FY2022": 865.9, "FY2021": 748.1, "_source_ref_id": "ref1"},
+                 {"metric_name": "Net Income", "unit": "M USD", "FY2023": 390.1, "FY2022": 285.6, "FY2021": 210.4, "_source_ref_id": "ref1"},
+                 {"metric_name": "Capex", "unit": "M USD", "FY2023": 221.5, "FY2022": 205.3, "FY2021": 180.2, "_source_ref_id": "ref1"}
             ],
              "quarterly_financials_summary": [
-                 {"metric_name": "Revenue", "unit": "M USD", "Q4_2023": 1213.7, "Q1_2024": 1248.5, "_source_ref_id": "ref3"},
-                 {"metric_name": "EBITDA", "unit": "M USD", "Q4_2023": 283.1, "Q1_2024": 287.2, "_source_ref_id": "ref3"}
+                 {"metric_name": "Revenue", "unit": "M USD", "Q1_2024": 1248.5, "Q4_2023": 1213.7, "Q3_2023": 1146.8, "Q2_2023": 1124.3, "Q1_2023": 1087.5, "_source_ref_id": "ref3"},
+                 {"metric_name": "EBITDA", "unit": "M USD", "Q1_2024": 287.2, "Q4_2023": 283.1, "Q3_2023": 260.4, "Q2_2023": 255.9, "Q1_2023": 248.1, "_source_ref_id": "ref3"}
              ],
             "key_adjusted_metrics": [
                  {"metric_name": "Adjusted EBITDA", "period": "FY2023", "reported_value": 1028.8, "adjusted_value": 1042.5, "adjustment_description": "Excludes $13.7M legal settlement", "unit": "M USD", "_source_ref_id": "ref1", "notes": None},
@@ -489,7 +493,9 @@ sections = [
     {
         "number": 8,
         "title": "Summary Financials (Segment)",
-        "specs": "Extract segment financial performance (Revenue, OpIncome, Segment EBITDA, etc.). Use exact segment names. Data for last 3 years + recent quarters. List segment-specific one-time items. Extract segment-specific MDNA (trends, achievements, challenges, disconnects). Provide details in 'analysis_text', key figures in structured lists.",
+        "specs": "Extract segment financial performance (Revenue, OpIncome, Segment EBITDA, etc.). Use exact segment names. \\n"
+                 "**Extract data for the three most recent full financial years (e.g., FY2023, FY2022, FY2021) and the five most recent reported quarters (e.g., Q1 2024, Q4 2023, Q3 2023, Q2 2023, Q1 2023), where available.**\\n"
+                 "List segment-specific one-time items. Extract segment-specific MDNA (trends, achievements, challenges, disconnects). Provide details in 'analysis_text'. **Within the analysis_text, also: provide comparative analysis across segments (key drivers, profit contributors, challenges); analyze performance drivers within major segments; evaluate sustainability of segment trends and significance of challenges/disconnects. Where possible based on documents, discuss how segment performance explains consolidated results (Section 7), how key products (Section 2) contribute to segment results, and how segments contribute to Strategic Objectives (Section 13).** Key figures should be presented in the structured 'segment_financial_summaries' field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -509,13 +515,14 @@ sections = [
                                        "properties": {
                                            "metric_name": {"type": "string"},
                                            "unit": {"type": "string"},
-                                            # Dynamically add years/quarters as keys
+                                           "_source_ref_id": {"type": ["string", "null"]},
+                                           "notes": {"type": ["string", "null"]}
                                        },
                                        "patternProperties": {
-                                            "^(FY\\d{4}|Q[1-4]_\\d{4})$": {"type": ["number", "string", "null"]}
+                                            "^(FY\\d{4}|Q[1-4]_\\d{4})$": {"type": ["number", "string", "null"]} # Allow Year OR Quarter keys
                                        },
                                        "required": ["metric_name", "unit"],
-                                       "additionalProperties": {"type": ["number", "string", "null", "object"]}
+                                       "additionalProperties": False
                                   }
                              },
                              "mdna_summary": {"type": ["string", "null"], "description": "Brief summary of MDNA specific to this segment."},
@@ -537,8 +544,8 @@ sections = [
                      "segment_name": "Industrial Automation",
                      "description": "Provides control systems, robotics, and software.",
                      "key_metrics": [
-                          {"metric_name": "Segment Revenue", "unit": "M USD", "FY2021": 2000.0, "FY2022": 2200.0, "FY2023": 2500.0, "Q1_2024": 670.0},
-                          {"metric_name": "Segment Operating Income", "unit": "M USD", "FY2021": 300.0, "FY2022": 350.0, "FY2023": 420.0, "Q1_2024": 105.0}
+                          {"metric_name": "Segment Revenue", "unit": "M USD", "FY2023": 2500.0, "FY2022": 2200.0, "FY2021": 2000.0, "Q1_2024": 670.0, "Q4_2023": 650.0, "Q3_2023": 630.0, "Q2_2023": 620.0, "Q1_2023": 600.0, "_source_ref_id": "ref1"},
+                          {"metric_name": "Segment Operating Income", "unit": "M USD", "FY2023": 420.0, "FY2022": 350.0, "FY2021": 300.0, "Q1_2024": 105.0, "Q4_2023": 102.0, "Q3_2023": 98.0, "Q2_2023": 96.0, "Q1_2023": 92.0, "_source_ref_id": "ref1"}
                      ],
                      "mdna_summary": "Strong growth driven by X1000 adoption, outpacing market [ref4]. Challenges: pricing pressure [ref5].",
                      "one_time_items": ["Restructuring charges FY23 (-$15.0M OpInc) [ref3]"],
@@ -549,7 +556,7 @@ sections = [
                      "segment_name": "Process Control Systems",
                      "description": "Provides systems for continuous process industries.",
                       "key_metrics": [
-                          {"metric_name": "Segment Revenue", "unit": "M USD", "FY2021": 1500.0, "FY2022": 1650.0, "FY2023": 1800.0, "Q1_2024": 460.0}
+                          {"metric_name": "Segment Revenue", "unit": "M USD", "FY2023": 1800.0, "FY2022": 1650.0, "FY2021": 1500.0, "Q1_2024": 460.0, "Q4_2023": 455.0, "Q3_2023": 450.0, "Q2_2023": 445.0, "Q1_2023": 440.0, "_source_ref_id": "ref1"}
                      ],
                      "mdna_summary": "Steady growth benefiting from energy investments; longer sales cycles [ref1].",
                      "one_time_items": [],
@@ -571,7 +578,7 @@ sections = [
     {
         "number": 9,
         "title": "Balance Sheet (Most Recent)",
-        "specs": "Extract summarized balance sheet (key assets/liabilities). Include key metrics (Total Assets/Debt, Net Debt, Leverage, Coverage, Equity, Working Capital metrics - Current Ratio, DSO, DIO, DPO, CCC). Detail debt profile (types, maturity, covenants). List significant off-balance sheet items. Extract MDNA on balance sheet focus areas. Provide detailed analysis in 'analysis_text', key figures in structured lists.",
+        "specs": "Extract summarized balance sheet (key assets/liabilities). Include key metrics (Total Assets/Debt, Net Debt, Leverage, Coverage, Equity, Working Capital metrics - Current Ratio, DSO, DIO, DPO, CCC). Detail debt profile (types, maturity, covenants). List significant off-balance sheet items. Extract MDNA on balance sheet focus areas. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: analyze overall BS strength/quality (asset mix, intangibles); evaluate liquidity position; assess risks of leverage/debt profile; discuss WC cycle drivers/implications; analyze OBS risks/impacts. Where possible based on documents, discuss how the BS impacts profitability/cash flow/returns (Section 7), enables/constrains Strategy/M&A (Sections 13, 11), and relates to Strategic Constraints (Section 14).** Key figures should be presented in structured lists.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -652,7 +659,7 @@ sections = [
     {
         "number": 10,
         "title": "Top 10 Shareholders",
-        "specs": "Extract ownership structure details (shares, classes, ticker, rights) with date. List top 10 shareholders (name, type, shares, %, changes, board seats). Identify shareholder groups & insider holdings. Detail activism history & agreements. Provide detailed analysis in 'analysis_text'. Identify key shareholders.",
+        "specs": "Extract ownership structure details (shares, classes, ticker, rights) with date. List top 10 shareholders (name, type, shares, %, changes, board seats). Identify shareholder groups & insider holdings. Detail activism history & agreements. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: analyze potential influence of major shareholders/groups; discuss alignment/conflicts between shareholder groups or with management; evaluate significance of insider holdings; assess implications of activism/governance agreements. Where possible based on documents, discuss how ownership might influence Key Decision Makers (Section 12) and relate to Strategic Objectives/Activity (Sections 13, 11).** Identify key shareholders.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -686,7 +693,7 @@ sections = [
     {
         "number": 11,
         "title": "Material Corporate Activity",
-        "specs": "Extract a list of material corporate activities (strategic reviews, financings, M&A) over last 3 years. Include pending/rumored/failed. Present chronologically (recent first). For each: Date, Type, Target/Counterparty, Description, Value, Structure Details, Rationale/Synergies, Status/Closing, Market Reaction, Post-transaction Impact. Provide detailed analysis in 'analysis_text'. Summarize key activities.",
+        "specs": "Extract a list of material corporate activities (strategic reviews, financings, M&A) over last 3 years. Include pending/rumored/failed. Present chronologically (recent first). For each: Date, Type, Target/Counterparty, Description, Value, Structure Details, Rationale/Synergies, Status/Closing, Market Reaction, Post-transaction Impact. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: evaluate the strategic fit of activities with Strategic Objectives (Section 13); assess success/failure of completed activities vs. rationale/impact; analyze risks/challenges (integration, synergy) of recent/pending deals; discuss financial implications (e.g., impact on Sections 7 & 9). Where possible based on documents, comment on management's track record (Section 12) regarding these activities and analyze if activities address Opportunities/Threats (Sections 17/18).** Summarize key activities in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -718,7 +725,7 @@ sections = [
     {
         "number": 12,
         "title": "Key Decision Makers",
-        "specs": "Extract leadership structure (Chair/CEO roles). Overview Board comp (total members, independent, tenure). List senior execs & board members. For execs: Name, title, appt date, age, education, prior experience, detailed comp (base, bonus, LTI breakdown), ownership, key reports. For board: Name, board position, independence, appt date, age, primary affiliation, background, committee roles/expertise, relationships, attendance, comp, ownership. Detail Board Committees. Note recent leadership changes & impact. Describe decision-making structure. Provide detailed analysis in 'analysis_text'. List key individuals.",
+        "specs": "Extract leadership structure (Chair/CEO roles). Overview Board comp (total members, independent, tenure). List senior execs & board members. For execs: Name, title, appt date, age, education, prior experience, detailed comp (base, bonus, LTI breakdown), ownership, key reports. For board: Name, board position, independence, appt date, age, primary affiliation, background, committee roles/expertise, relationships, attendance, comp, ownership. Detail Board Committees. Note recent leadership changes & impact. Describe decision-making structure. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: assess the overall quality/experience/independence of the leadership & board; evaluate appropriateness of leadership structure; analyze compensation alignment; evaluate impact of leadership changes; assess committee effectiveness. Where possible based on documents, analyze how leadership experience aligns with Strategy (Section 13), relates to Material Activity (Section 11), links to Shareholders (Section 10), and could be a Strength/Weakness (Sections 15/16).** List key individuals in structured fields.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -810,7 +817,7 @@ sections = [
      {
         "number": 14,
         "title": "Strategic Constraints",
-        "specs": "Extract overview of main strategic constraints. Identify top 3 (hindering objectives). For each: Name/Category, Description/Root Causes, Affected Objective(s)/Impact, Quantitative Impact Data, Historical Evolution, Competitive Benchmarking, Mitigation Efforts/Effectiveness. Identify emerging constraints. Provide detailed analysis in 'analysis_text'. List key constraints.",
+        "specs": "Extract overview of main strategic constraints. Identify top 3 (hindering objectives). For each: Name/Category, Description/Root Causes, Affected Objective(s)/Impact, Quantitative Impact Data, Historical Evolution, Competitive Benchmarking, Mitigation Efforts/Effectiveness. Identify emerging constraints. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: assess the overall severity/criticality of these constraints; analyze any interplay between constraints. Where possible based on documents, discuss how constraints relate to Weaknesses (Section 16), their potential ongoing financial impact (Sections 7, 9), and if they represent key risk factors.** List key constraints in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -838,11 +845,11 @@ sections = [
              "notes": None
         }
     },
-# --- Section 15: Strengths (Simplified - Keep as previous draft) ---
+# --- Section 15: Strengths (Simplified) ---
     {
         "number": 15,
         "title": "Strengths",
-        "specs": "Extract overview of core competitive strengths. Identify top 3 relevant strengths enabling competition. Focus on existing strengths. For each: Name/Category, Description, Development History (how built), Quantitative Evidence (substantiation, metrics vs competitors), Competitive Advantage Analysis (how it translates to performance), Current Leverage (how used now). Identify emerging strengths. Provide detailed analysis in 'analysis_text'. List key strengths.",
+        "specs": "Extract overview of core competitive strengths. Identify top 3 relevant strengths enabling competition. Focus on existing strengths. For each: Name/Category, Description, Development History (how built), Quantitative Evidence (substantiation, metrics vs competitors), Competitive Advantage Analysis (how it translates to performance), Current Leverage (how used now). Identify emerging strengths. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: evaluate the sustainability/defensibility and relative importance of these strengths; identify any potential underutilization. Where possible based on documents, discuss how strengths enable Strategic Objectives (Section 13), position for Opportunities (Section 17), contribute to Financial Performance (Section 7), and differentiate from Competitors (Section 5).** List key strengths in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -874,7 +881,7 @@ sections = [
     {
         "number": 16,
         "title": "Weaknesses",
-        "specs": "Extract overview of main weaknesses/limitations. Identify top 3 relevant weaknesses hindering performance/competition. For each: Name/Category, Description/Root Causes, Quantitative Impact Data (vs competitors), Competitive Disadvantage Analysis (how it manifests), Mitigation Efforts/Effectiveness. Identify emerging weaknesses. Provide detailed analysis in 'analysis_text'. List key weaknesses.",
+        "specs": "Extract overview of main weaknesses/limitations. Identify top 3 relevant weaknesses hindering performance/competition. For each: Name/Category, Description/Root Causes, Quantitative Impact Data (vs competitors), Competitive Disadvantage Analysis (how it manifests), Mitigation Efforts/Effectiveness. Identify emerging weaknesses. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: analyze the interplay between different weaknesses; evaluate if weaknesses are structural vs tactical and the difficulty in addressing them. Where possible based on documents, discuss how weaknesses contribute to Strategic Constraints (Section 14), increase vulnerability to Threats (Section 18), impact Financial Performance (Sections 7, 9), hinder Strategic Objectives (Section 13), or reflect challenges for Key Decision Makers (Section 12).** List key weaknesses in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -905,7 +912,7 @@ sections = [
     {
         "number": 17,
         "title": "Opportunities",
-        "specs": "Extract overview of promising near-term (12-24m) opportunities. Identify top 3 actionable opportunities leveraging existing strengths. For each: Name/Description, Enabling Strength(s), Market Potential/Size, Implementation Plan/Timeframe/Investment, Quantified Financial Impact (Revenue, Profit, ROI), Key Risks. Provide detailed analysis in 'analysis_text'. List key opportunities.",
+        "specs": "Extract overview of promising near-term (12-24m) opportunities. Identify top 3 actionable opportunities leveraging existing strengths. For each: Name/Description, Enabling Strength(s), Market Potential/Size, Implementation Plan/Timeframe/Investment, Quantified Financial Impact (Revenue, Profit, ROI), Key Risks. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: evaluate the opportunity's strategic attractiveness/fit; assess execution feasibility, considering potential internal roadblocks (linked to Weaknesses Section 16, Constraints Section 14) and risks. Where possible based on documents, discuss how opportunities support Strategic Objectives (Section 13), potentially mitigate Weaknesses (Section 16) or counter Threats (Section 18), relate financial impact/investment to overall Financials (Sections 7, 9), and could alter Competitive Positioning (Section 5).** List key opportunities in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -935,7 +942,7 @@ sections = [
     {
         "number": 18,
         "title": "Threats",
-        "specs": "Extract overview of significant external threats. Identify top 3 threats (Competitive, Tech, Regulatory, Supply Chain etc.) impacting performance in next 12-24m. For each: Name/Category, Description/Drivers, Quantified Potential Negative Impact (Revenue, Margin, Share), Likelihood/Timeframe/Velocity Assessment, Mitigation Efforts/Effectiveness, Related Competitor Context. Provide detailed analysis in 'analysis_text'. List key threats.",
+        "specs": "Extract overview of significant external threats. Identify top 3 threats (Competitive, Tech, Regulatory, Supply Chain etc.) impacting performance in next 12-24m. For each: Name/Category, Description/Drivers, Quantified Potential Negative Impact (Revenue, Margin, Share), Likelihood/Timeframe/Velocity Assessment, Mitigation Efforts/Effectiveness, Related Competitor Context. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: analyze interconnectedness and escalation potential of threats; evaluate overall company vulnerability and preparedness (linking to Weaknesses Section 16, Constraints Section 14). Where possible based on documents, discuss how threats could derail Strategic Objectives (Section 13), exploit Weaknesses (Section 16), negate Opportunities (Section 17), impact Financial Performance (Sections 7, 9), or influence Key Decision Makers (Section 12).** List key threats in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -964,7 +971,7 @@ sections = [
     {
         "number": 19,
         "title": "Sellside Positioning - Macro",
-        "specs": "Extract overview summarizing positive macro trends. Identify top 3 positive macro trends (economic indicators, broad forces). Focus only on macro. For each: Name/Category, Description, Quantitative Data (recent history + forecast, indicators like GDP/capex/labor/trade/energy/rates), Regional/Sector Breakdowns, How it benefits Company (quantitative link if possible). Provide detailed analysis in 'analysis_text'. List key trends.",
+        "specs": "Extract overview summarizing positive macro trends. Identify top 3 positive macro trends (economic indicators, broad forces). Focus only on macro. For each: Name/Category, Description, Quantitative Data (recent history + forecast, indicators like GDP/capex/labor/trade/energy/rates), Regional/Sector Breakdowns, How it benefits Company (quantitative link if possible). Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: evaluate the significance and sustainability of these trends for the company's model; synthesize the expected positive impact on key company metrics (e.g., Sections 6, 7, 8); briefly acknowledge but downplay related risks for credibility. Where possible based on documents, discuss how these trends support Strategic Objectives (Section 13), enable Opportunities (Section 17), and potentially give an edge over Competitors (Section 5).** List key trends in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -992,7 +999,7 @@ sections = [
     {
         "number": 20,
         "title": "Sellside Positioning - Industry",
-        "specs": "Extract overview summarizing positive industry dynamics/trends (relevant sectors). Identify top 3 positive industry trends (tech adoption, business models, segment growth, competitive shifts, industry regulation). Focus only on industry. For each: Name/Category, Description, Quantitative Data (recent history + forecast, indicators like segment size/growth, tech penetration, pricing, consolidation), Segment/Product Breakdowns, How it benefits Company (alignment/outperformance). Provide detailed analysis in 'analysis_text'. List key trends.",
+        "specs": "Extract overview summarizing positive industry dynamics/trends (relevant sectors). Identify top 3 positive industry trends (tech adoption, business models, segment growth, competitive shifts, industry regulation). Focus only on industry. For each: Name/Category, Description, Quantitative Data (recent history + forecast, indicators like segment size/growth, tech penetration, pricing, consolidation), Segment/Product Breakdowns, How it benefits Company (alignment/outperformance). Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: evaluate how well the company is positioned vs peers to capitalize on these trends (linking to Strengths Section 15, Products Section 2); assess trend momentum/sustainability and synthesize expected positive financial impact (e.g., Sections 7, 8, 13); use trends to reinforce the company's competitive edge (vs Section 5); briefly acknowledge but downplay industry risks for credibility.** List key trends in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -1021,7 +1028,7 @@ sections = [
     {
         "number": 21,
         "title": "Sellside Positioning - Competitive Positioning",
-        "specs": "Extract overview summarizing key competitive advantages & market standing. Identify top 3 specific advantages impacting economic performance (next 12m). For each: Name/Category, Description, Quantitative Evidence (performance vs competitors, share, cost advantage, pricing premium), How it translates to Financial Performance/Market Outcomes (margins, growth, win rates, retention), Customer Validation (retention, satisfaction, testimonials). Provide detailed analysis in 'analysis_text'. List key advantages.",
+        "specs": "Extract overview summarizing key competitive advantages & market standing. Identify top 3 specific advantages impacting economic performance (next 12m). For each: Name/Category, Description, Quantitative Evidence (performance vs competitors, share, cost advantage, pricing premium), How it translates to Financial Performance/Market Outcomes (margins, growth, win rates, retention), Customer Validation (retention, satisfaction, testimonials). Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: strongly emphasize the sustainability/defensibility of advantages (linking to Strengths Section 15); directly contrast with key Competitors (Section 5) and their Weaknesses (Section 16) where possible; forcefully articulate the direct link to value creation (Sections 6, 7, 8); proactively address potential skepticism with strong rebuttals; conclude with a powerful summary reinforcing superior positioning as part of the investment thesis.** List key advantages in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -1052,7 +1059,7 @@ sections = [
     {
         "number": 22,
         "title": "Sellside Positioning - Operating Performance",
-        "specs": "Extract overview highlighting exceptional operating performance/execution (last 24m). Identify top 3 operating metrics/achievements demonstrating strength (beyond standard financials: e.g., share gains, volume growth, price realization, ARPU growth, efficiency gains like utilization/OTD). For each: Name/Category, Description, Quantitative Trend Data (last 24m, quarterly?), Comparison vs Benchmarks (emphasize outperformance), Key Drivers, Link to Financial Outcomes, Sustainability Commentary. Provide detailed analysis in 'analysis_text'. List key highlights.",
+        "specs": "Extract overview highlighting exceptional operating performance/execution (last 24m). Identify top 3 operating metrics/achievements demonstrating strength (beyond standard financials: e.g., share gains, volume growth, price realization, ARPU growth, efficiency gains like utilization/OTD). For each: Name/Category, Description, Quantitative Trend Data (last 24m, quarterly?), Comparison vs Benchmarks (emphasize outperformance), Key Drivers, Link to Financial Outcomes, Sustainability Commentary. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: sharply quantify outperformance vs Competitors (Section 5); emphasize driver quality and sustainability (linking to Strengths Section 15, Strategy Section 13); explicitly reinforce the direct link to Financial Performance (Sections 7, 8); frame achievements as evidence of strong Management execution (Section 12); synthesize overall operational excellence as a pillar of the investment thesis.** List key highlights in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -1083,7 +1090,7 @@ sections = [
     {
         "number": 23,
         "title": "Sellside Positioning - Financial Performance",
-        "specs": "Extract overview highlighting exceptional financial performance (last 24m). Identify top 3 financial achievements/metrics demonstrating strength (Growth+Profitability, Cash Generation, Capital Efficiency like ROIC). For each: Name/Category, Description, Quantitative Trend Data (last 24m, quarterly?), Comparison vs Benchmarks/Competitors (quantify outperformance), Key Drivers (link to ops/strategy), Link to Shareholder Value/Strategic Flexibility. Provide detailed analysis in 'analysis_text'. List key highlights.",
+        "specs": "Extract overview highlighting exceptional financial performance (last 24m). Identify top 3 financial achievements/metrics demonstrating strength (Growth+Profitability, Cash Generation, Capital Efficiency like ROIC). For each: Name/Category, Description, Quantitative Trend Data (last 24m, quarterly?), Comparison vs Benchmarks/Competitors (quantify outperformance), Key Drivers (link to ops/strategy), Link to Shareholder Value/Strategic Flexibility. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: sharply quantify the magnitude of outperformance vs Competitors (Section 5); stress the quality and sustainability of results (linking to Sections 13, 21, 22); explicitly link performance to shareholder value and enhanced strategic flexibility (linking to Sections 9, 11); frame results as clear validation of strategy (Section 13) and Management execution (Section 12); synthesize overall financial strength as a core investment pillar.** List key highlights in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -1114,7 +1121,7 @@ sections = [
     {
         "number": 24,
         "title": "Sellside Positioning - Management",
-        "specs": "Extract overview positioning management/board as experienced, capable, aligned. Identify top 3 facts/achievements related to management/board strength (last 24m). Focus on quantifiable achievements (TSR, successful strategy execution, financial improvements). Highlight relevant background/experience of key individuals (CEO, CFO, Chair). Emphasize successful execution of specific initiatives with data. Include positive governance aspects. Provide detailed analysis in 'analysis_text'. List key strengths/achievements.",
+        "specs": "Extract overview positioning management/board as experienced, capable, aligned. Identify top 3 facts/achievements related to management/board strength (last 24m). Focus on quantifiable achievements (TSR, successful strategy execution, financial improvements). Highlight relevant background/experience of key individuals (CEO, CFO, Chair). Emphasize successful execution of specific initiatives with data. Include positive governance aspects. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: frame quantifiable achievements (linking to Sections 11, 13, 22, 23) as proof of superior execution vs peers; emphasize how leader experience (Section 12) fits industry dynamics (Section 20) and Opportunities (Section 17); stress shareholder alignment (Section 10, 12), stability, and long-term focus; position strong governance (Section 12) as a competitive advantage; synthesize leadership as a core differentiating strength and reason to invest.** List key strengths/achievements in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -1146,7 +1153,7 @@ sections = [
     {
         "number": 25,
         "title": "Sellside Positioning - Potential Investor Concerns and Mitigants",
-        "specs": "Identify top 5 potential investor concerns (fundamental business or valuation). For each: Name/Category, Description, Supporting Data Points. Immediately follow with 1-2 compelling Mitigants: Description, Supporting Data/Evidence showing how concern is addressed/reduced. Provide detailed analysis in 'analysis_text'. List key concerns.",
+        "specs": "Identify top 5 potential investor concerns (fundamental business or valuation). For each: Name/Category, Description, Supporting Data Points. Immediately follow with 1-2 compelling Mitigants: Description, Supporting Data/Evidence showing how concern is addressed/reduced. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: frame mitigants strongly (reframing concerns, highlighting proactive steps); quantify mitigant impact where possible; explicitly link mitigants to core Strengths (Section 15), Strategy (Section 13), Operations (Section 22), or Financials (Section 23); carefully acknowledge minor residual risks if necessary for credibility, but emphasize overall strength; synthesize the company's preparedness to address these points.** List key concerns in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -1176,7 +1183,7 @@ sections = [
     {
         "number": 26,
         "title": "Buyside Due Diligence - Macro",
-        "specs": "From buyside view, analyze top 3 macro risk trends (next 12-24m). Focus on downside (slowing growth, rates, inflation, labor, supply chain, FX, geopolitical). For each: Name/Category, Risk Description, Company Sensitivity Analysis (quantify negative impact scenarios), Competitive Benchmarking (relative vulnerability), Mitigation Assessment (effectiveness/limitations), Formulate 2-3 DD Questions. Provide detailed analysis in 'analysis_text'. List key risks.",
+        "specs": "From buyside view, analyze top 3 macro risk trends (next 12-24m). Focus on downside (slowing growth, rates, inflation, labor, supply chain, FX, geopolitical). For each: Name/Category, Risk Description, Company Sensitivity Analysis (quantify negative impact scenarios), Competitive Benchmarking (relative vulnerability), Mitigation Assessment (effectiveness/limitations), Formulate 2-3 DD Questions. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: deepen the analysis of sensitivity/vulnerability (linking to Section 1 structure); rigorously evaluate mitigation effectiveness/limitations vs Competitors (Section 5); sharpen competitive benchmarking on relative vulnerability; synthesize the most critical macro risks requiring deep diligence; ensure DD questions are highly specific, probing, and data-driven.** List key risks in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -1211,12 +1218,12 @@ sections = [
     {
         "number": 27,
         "title": "Buyside Due Diligence - Industry",
-        "specs": "From buyside view, analyze top 3 industry risk trends (next 12-24m). Focus on downside (disruptive tech, competition, customer shifts, industry regulation, biz model obsolescence). For each: Name/Category, Risk Description/Why risk to Company, Company Vulnerability Analysis (quantify exposure/gap/scenario impact), Competitive Benchmarking (positioning/response vs peers), Company Response Assessment (adequacy/limitations), Formulate 2-3 DD Questions. Provide detailed analysis in 'analysis_text'. List key risks.",
+        "specs": "From buyside view, analyze top 3 industry risk trends (next 12-24m). Focus on downside (disruptive tech, competition, customer shifts, industry regulation, biz model obsolescence). For each: Name/Category, Risk Description/Why risk to Company, Company Vulnerability Analysis (quantify exposure/gap/scenario impact), Competitive Benchmarking (positioning/response vs peers), Company Response Assessment (adequacy/limitations), Formulate 2-3 DD Questions. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: deepen analysis of vulnerability (linking to business model, Section 2 Products, Section 13 Strategy); critically evaluate realism/sufficiency of strategic response vs industry pace and Competitors (Section 5); probe for potentially unacknowledged industry risks; synthesize the most critical industry risks for deep diligence; ensure DD questions are highly specific, challenging, and evidence-seeking.** List key risks in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
                  "identified_risks_list": {
-                      "type": "array",
+                    "type": "array",
                       "description": "List of key industry risk titles identified for diligence.",
                       "items": {"type": "string"}
                  },
@@ -1246,17 +1253,17 @@ sections = [
     {
         "number": 28,
         "title": "Buyside Due Diligence - Competitive Positioning",
-        "specs": "From buyside view, critically evaluate competitive positioning. Analyze market share trends (overall, segment, geo; last 24-36m; rate of change vs competitors). Assess defensibility/sustainability of product differentiation (use objective metrics, validate claims, identify erosion). Evaluate actual pricing power (realization, discounting, premium/discount vs competitors, cost pass-through). Analyze relative cost position (benchmark COGS%, SG&A%, Mfg cost/unit, R&D efficiency vs peers). Critically assess claimed advantages (validate magnitude, sustainability, economic contribution). Identify key disadvantages/vulnerabilities. Formulate 2-3 DD questions per topic area. Provide detailed analysis in 'analysis_text'.",
+        "specs": "From buyside view, critically evaluate competitive positioning. Analyze market share trends (overall, segment, geo; last 24-36m; rate of change vs competitors). Assess defensibility/sustainability of product differentiation (use objective metrics, validate claims, identify erosion). Evaluate actual pricing power (realization, discounting, premium/discount vs competitors, cost pass-through). Analyze relative cost position (benchmark COGS%, SG&A%, Mfg cost/unit, R&D efficiency vs peers). Critically assess claimed advantages (validate magnitude, sustainability, economic contribution). Identify key disadvantages/vulnerabilities. Formulate 2-3 DD questions per topic area. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: scrutinize market share quality/drivers and challenge market definitions; actively test differentiation claims for erosion vs Competitors (Section 5); probe pricing power limits/sustainability; identify cost structure vulnerabilities (linking to Section 4) and assess R&D effectiveness/ROI; rigorously validate advantages while amplifying Weaknesses (Section 16) and Constraints (Section 14) as exploitable disadvantages; synthesize the net competitive position and highlight critical competitive risks; ensure DD questions are highly specific, challenging, and data-requesting based on this analysis.** List key risks in the structured field (renaming from `key_dd_questions` for clarity, though questions generated in text).",
         "schema": add_standard_fields({
-            "type": "object",
-            "properties": {
+                        "type": "object",
+                        "properties": {
                  "positioning_summary": {
                      "type": ["string", "null"],
                      "description": "Overall buyside summary of competitive strengths and weaknesses."
                  },
-                 "key_dd_questions": {
+                 "key_dd_questions": { # Retaining field name for consistency, but content driven by analysis
                       "type": "array",
-                      "description": "Consolidated list of key buyside due diligence questions related to competitive positioning.",
+                      "description": "Consolidated list of key buyside due diligence questions related to competitive positioning, driven by the analysis_text.",
                       "items": {"type": "string"}
                  }
             },
@@ -1282,7 +1289,7 @@ sections = [
     {
         "number": 29,
         "title": "Buyside Due Diligence - Operating Performance",
-        "specs": "From buyside view, critically analyze top 3 operating metrics impacting value/risk (last 24m). Focus beyond financials (e.g., share trends, volume/price drivers, unit economics, CAC, CLTV/CAC, churn/retention by cohort, asset utilization). For each: Definition/Relevance, Historical Trend/Volatility, Benchmark vs Peers (esp. underperformance/sustainability), Driver Analysis (sustainability/quality), Sustainability Assessment (risks/headwinds), Potential Financial Impact of Risks, Formulate 2-3 DD Questions.",
+        "specs": "From buyside view, critically analyze top 3 operating metrics impacting value/risk (last 24m). Focus beyond financials (e.g., share trends, volume/price drivers, unit economics, CAC, CLTV/CAC, churn/retention by cohort, asset utilization). For each: Definition/Relevance, Historical Trend/Volatility, Benchmark vs Peers (esp. underperformance/sustainability), Driver Analysis (sustainability/quality), Sustainability Assessment (risks/headwinds), Potential Financial Impact of Risks, Formulate 2-3 DD Questions. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: scrutinize metric definitions, quality, and volatility; rigorously challenge sustainability of positive trends, identifying headwinds and comparing durability vs Competitors (Section 5); quantify potential downside financial impact (Sections 7, 8) from operational weaknesses; intensify focus on unit economics and cohort analysis (churn, retention, expansion); synthesize the most critical operational risks for deep diligence; ensure DD questions are highly specific, data-validating, and assumption-testing.** List key metrics identified for diligence in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -1318,7 +1325,7 @@ sections = [
     {
         "number": 30,
         "title": "Buyside Due Diligence - Financial Performance",
-        "specs": "From buyside view, critically analyze 5-7 key financial metrics (quality/sustainability risks). Focus beyond headlines (earnings quality, margins, cash flows, returns). For each: Definition/Relevance, Historical Trend/Benchmark, Quality Assessment (accounting, one-timers, adjustments, mgmt indicators), Sustainability Assessment (drivers, risks, headwinds), Potential Financial Impact (normalization, risk quantification), Formulate 2-3 DD Questions. Note forensic flags.",
+        "specs": "From buyside view, critically analyze 5-7 key financial metrics (quality/sustainability risks). Focus beyond headlines (earnings quality, margins, cash flows, returns). For each: Definition/Relevance, Historical Trend/Benchmark, Quality Assessment (accounting, one-timers, adjustments, mgmt indicators), Sustainability Assessment (drivers, risks, headwinds), Potential Financial Impact (normalization, risk quantification), Formulate 2-3 DD Questions. Note forensic flags. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: scrutinize accounting policies/estimates vs industry/Competitors (Section 5); challenge non-GAAP adjustments (appropriateness, recurrence, economic substance); deep dive into cash flow quality (driver sustainability, WC impact Section 9, capitalization effects); probe margin sustainability/drivers (challenge masking, link to Sections 28/29); assess return quality/asset risk (leverage impact Section 9, impairment risks Section 9); synthesize key financial red flags and critical diligence focus areas; ensure DD questions are highly specific, probing, data-driven, and assumption-challenging.** List key metrics identified for diligence in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -1355,7 +1362,7 @@ sections = [
     {
         "number": 31,
         "title": "Buyside Due Diligence - Management",
-        "specs": "From buyside view, critically evaluate key management (C-suite, key reports) & Board (Chair, Lead Ind. Director). Focus on risks: individual capabilities, alignment, retention, succession, integration readiness. For key individuals: Role/Tenure, Track Record Analysis (validate achievements, identify failures/controversies), Experience Fit (future strategy/integration), Red Flags, Retention Risk Analysis (comp hooks, CoC, satisfaction). Assess team M&A/integration track record & readiness gaps. Evaluate board effectiveness/independence/conflicts. Formulate 2-3 DD questions per key individual/area.",
+        "specs": "From buyside view, critically evaluate key management (C-suite, key reports) & Board (Chair, Lead Ind. Director). Focus on risks: individual capabilities, alignment, retention, succession, integration readiness. For key individuals: Role/Tenure, Track Record Analysis (validate achievements, identify failures/controversies), Experience Fit (future strategy/integration), Red Flags, Retention Risk Analysis (comp hooks, CoC, satisfaction). Assess team M&A/integration track record & readiness gaps. Evaluate board effectiveness/independence/conflicts. Formulate 2-3 DD questions per key individual/area. Provide detailed analysis in 'analysis_text'. **Within the analysis_text, also: challenge track record narratives (vs Section 24), seeking contradictory evidence; probe experience gaps (vs Section 12) relative to future strategy, industry shifts (Section 27), and key Weaknesses (Section 16); investigate alignment/conflicts (vs Section 10, 12), challenging board independence/incentives; assess retention/transition risks and succession quality; scrutinize integration capability/realism (vs Section 11); synthesize key leadership risks and potential need for post-acquisition change; ensure DD questions are highly specific, challenging, and target identified risks.** List key individuals assessed in the structured field.",
         "schema": add_standard_fields({
             "type": "object",
             "properties": {
@@ -1388,42 +1395,73 @@ sections = [
              "notes": None
         }
     },
-# --- Section 32: Appendix (Simplified - Keep as previous draft) ---
+# --- START: Section 32 Definition (Simplified - Table Text Dump) ---
     {
         "number": 32,
-        "title": "Appendix - Extracted Numerical Data Snippets",
-        "specs": "Extract sentences or short text snippets containing meaningful numerical data points (integers, decimals, percentages) from the documents. Include source document and page number for each snippet.",
-        "schema": {
+        "title": "Appendix - Extracted Tables", # Renamed for clarity
+        "specs": "Identify and extract the textual content of any data tables found within the provided source documents. Present each table clearly, perhaps using markdown table format or simple text formatting within the JSON string. Include source document and page number for context if possible.",
+        "schema": { # Schema defined directly, DO NOT wrap with add_standard_fields()
             "type": "object",
             "properties": {
-                "extracted_snippets": {
+                "extracted_tables": {
                     "type": "array",
-                    "description": "List of text snippets containing numerical data.",
+                    "description": "List of extracted tables, including context and text content.",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "text_snippet": {"type": "string", "description": "The extracted text containing the number."},
-                            "document_name": {"type": "string", "description": "Source document filename."},
-                            "source_page": {"type": ["string", "integer", "null"], "description": "Page number."},
-                            "source_section": {"type": ["string", "null"], "description": "Optional section/table identifier."}
+                            "table_description": {"type": ["string", "null"], "description": "Optional title or brief description of the table's content."},
+                            "table_content_text": {"type": "string", "description": "The extracted textual representation of the table (e.g., plain text, markdown format)."},
+                            "document_name": {"type": ["string", "null"], "description": "Source document filename."},
+                            "source_page": {"type": ["string", "integer", "null"], "description": "Page number where table was found."},
+                            "notes": {"type": ["string", "null"], "description": "Optional notes about the extraction."}
                         },
-                        "required": ["text_snippet", "document_name", "source_page"],
-                         "additionalProperties": False
+                        "required": ["table_content_text"],
+                        "additionalProperties": False
                     }
-                }
+                },
+                "footnotes": { # Standard footnotes field defined here explicitly
+                    "type": "array",
+                    "description": "List of sources used in table descriptions or analysis.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "Unique reference ID (e.g., 'ref1')."},
+                            "document": {"type": "string", "description": "Source document name/description."},
+                            "page": {"type": ["string", "integer", "null"], "description": "Page number(s) or identifier."},
+                            "section": {"type": ["string", "null"], "description": "Specific section/table within the document."}
+                        },
+                        "required": ["id", "document"],
+                        "additionalProperties": False
+                    }
+                },
+                "notes": {"type": ["string", "null"], "description": "Optional general notes for the entire section."} # Standard top-level notes
             },
-            "required": ["extracted_snippets"],
-             "additionalProperties": False # No analysis_text or footnotes needed here
+            "required": ["extracted_tables", "footnotes"], # Require the array and footnotes, even if empty
+            "additionalProperties": False
         },
-        "template": {
-            "extracted_snippets": [
-                {"text_snippet": "Consolidated revenues were $4,572.3 million for the year ended December 31, 2023.", "document_name": "Annual Report 2023.pdf", "source_page": "F-5", "source_section": "Consolidated Statements of Income"},
-                {"text_snippet": "This represents an increase of 14.1% compared to the prior year.", "document_name": "Annual Report 2023.pdf", "source_page": "25", "source_section": "MD&A - Results of Operations"},
-                {"text_snippet": "Average manufacturing capacity utilization improved to 85.4%.", "document_name": "Annual Report 2023.pdf", "source_page": "32", "source_section": "MD&A - Operational Performance"},
-                {"text_snippet": "First quarter revenue increased 14.8% year-over-year to $1,248.5 million.", "document_name": "Q1 2024 Earnings Release.pdf", "source_page": "1", "source_section": "Highlights"}
-            ]
+        "template": { # Example showing how extracted tables might look
+            "extracted_tables": [
+                {
+                    "table_description": "Summary Income Statement (Half Year Ended 30 Sep)",
+                    "table_content_text": "| Metric (S$ m) | 2024 | 2023 | Chge % |\\n|---|---|---|---|\\n| Operating revenue | 6,992 | 7,028 | -0.5 |\\n| EBITDA | 1,947 | 1,787 | 9.0 |\\n| ... | ... | ... | ... |",
+                    "document_name": "Singtel MDNA H125.pdf",
+                    "source_page": "6",
+                    "notes": "Formatted as markdown example."
+                },
+                {
+                    "table_description": "Mobile Customer Market Share (%)",
+                    "table_content_text": "Region | Mar 22 | Sep 23 | Mar 24 | Sep 24\\nSingapore | 48.0 | 45.3 | 46.3 | 45.5\\n...",
+                    "document_name": "Singtel MDNA H125.pdf",
+                    "source_page": "4",
+                    "notes": "Formatted as plain text example."
+                }
+            ],
+            "footnotes": [],
+            "notes": "Contains textual representations of tables found."
         }
-    },
+    }
+# --- END: Section 32 Definition (Simplified - Table Text Dump) ---
+# --- END: Section 32 Definition (Simplified - Table Text Dump) ---
 ] # Added missing closing bracket for the main 'sections' list
 
 # Function to get schema or template for prompts (can be used in section_processor)
