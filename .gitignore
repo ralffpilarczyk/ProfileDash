@@ -11,6 +11,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# working files
+src/section_schemas.py
+
 # log files
 user_log.json
 permitted_users.json
