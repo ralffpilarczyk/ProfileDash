@@ -19,7 +19,7 @@ from sendgrid.helpers.mail import (
 )
 
 # --- Variables ---
-APP_VERSION = "v1.0.4"
+APP_VERSION = "v1.0.7"
 LOG_FILE = "user_log.json"
 DATASET_REPO_ID = "ralfpilarczyk/ProfileDashData" 
 PERMITTED_USERS_FILE = "permitted_users.json"
@@ -841,16 +841,16 @@ def handle_api_key(api_key, auth_state):
     print(f"API Key set. Current auth_state: {auth_state}") # Debug print
     return "API Key accepted. Upload documents to generate profile.", auth_state, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
 
-# --- Reset Function (Revised outputs) ---
+# --- Reset Function (Revised for new UI structure) ---
 def reset_interface():
     """Resets the main app interface components for a new profile generation."""
     print("Resetting interface elements.")
     return (
         None, # pdf_upload
         "",   # status_output
-        # REMOVED html_output
         gr.update(value=None, visible=False), # download_output (reset and hide)
-        gr.update(visible=False) # reset_button itself hide
+        gr.update(visible=False), # reset_button itself hide
+        gr.update(visible=False)  # status_container hide
     )
 
 def handle_generate_click(file_paths, auth_state):
@@ -906,17 +906,283 @@ def handle_generate_click(file_paths, auth_state):
         return f"Error: Could not start generation process. {thread_e}", None, gr.update(visible=False)
     
 
-# --- Build the Gradio Blocks Interface (REVISED - No HTML Preview) ---
+# --- Modify handle_generate_click to also show the status container ---
+def handle_generate_click_with_status(file_paths, auth_state):
+    """Enhanced version of handle_generate_click that also manages UI visibility"""
+    # Show the status container first
+    result = handle_generate_click(file_paths, auth_state)
+    # Return result plus visibility update for status container
+    return [*result, gr.update(visible=True)]
+
+# --- Build the Gradio Blocks Interface (ENHANCED UI/UX) ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
+
+    # --- Add enhanced CSS for improved UI/UX ---
+    gr.Markdown("""
+    <style>
+        /* Responsive container */
+        .container {
+            max-width: 800px !important;
+            margin: 0 auto !important;
+            padding: 0 15px !important;
+        }
+        
+        /* Progress indicator */
+        .progress-container {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            position: relative;
+        }
+        .progress-step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 1;
+            flex: 1;
+        }
+        .step-circle {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background-color: #ddd;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #555;
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+        .step-text {
+            font-size: 12px;
+            color: #777;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+        .active-step .step-circle {
+            background-color: #2196F3;
+            color: white;
+            border-color: #0d6efd;
+        }
+        .active-step .step-text {
+            color: #2196F3;
+            font-weight: bold;
+        }
+        .completed-step .step-circle {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .progress-bar {
+            position: absolute;
+            top: 15px;
+            height: 2px;
+            background-color: #ddd;
+            width: 100%;
+            z-index: 0;
+        }
+        
+        /* Loading indicator */
+        .loading-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 3px solid rgba(0, 0, 0, 0.1);
+            border-radius: 50%;
+            border-top-color: #2196F3;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+        @keyframes spin {
+            to {transform: rotate(360deg);}
+        }
+        
+        /* Tooltip styles */
+        .tooltip {
+            position: relative;
+            display: inline-block;
+            cursor: help;
+            margin-left: 5px;
+        }
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 200px;
+            background-color: #555;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 10px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
+        }
+        
+        /* Validation feedback */
+        .error-text {
+            color: #d32f2f;
+            font-size: 12px;
+            margin-top: 4px;
+            margin-bottom: 8px;
+            transition: all 0.3s ease;
+        }
+        .success-text {
+            color: #388e3c;
+            font-size: 12px;
+            margin-top: 4px; 
+            margin-bottom: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        /* Dark mode additions */
+        .dark-mode {
+            background-color: #222 !important;
+            color: #eee !important;
+        }
+        .dark-mode .gradio-container {
+            background-color: #333 !important;
+        }
+        .dark-mode .dark-text {
+            color: #eee !important;
+        }
+        .dark-mode input, .dark-mode textarea {
+            background-color: #444 !important;
+            color: #eee !important;
+            border-color: #555 !important;
+        }
+        .dark-mode .step-circle {
+            background-color: #444;
+            color: #eee;
+        }
+        .dark-mode .step-text {
+            color: #bbb;
+        }
+        .dark-mode .progress-bar {
+            background-color: #555;
+        }
+        
+        /* Status output container transitions */
+        #status-output-container {
+            transition: all 0.3s ease;
+            max-height: 0;
+            overflow: hidden;
+        }
+        #status-output-container.visible {
+            max-height: 400px;
+        }
+    </style>
+    
+    <script>
+        // JavaScript for enhanced UI functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            // Setup dark mode toggle
+            const darkModeToggle = document.getElementById('dark-mode-toggle');
+            if (darkModeToggle) {
+                darkModeToggle.addEventListener('change', function() {
+                    document.body.classList.toggle('dark-mode');
+                    localStorage.setItem('darkMode', document.body.classList.contains('dark-mode'));
+                });
+                
+                // Check for saved preference
+                if (localStorage.getItem('darkMode') === 'true') {
+                    document.body.classList.add('dark-mode');
+                    darkModeToggle.checked = true;
+                }
+            }
+            
+            // Update progress indicator
+            function updateProgress(step) {
+                const steps = document.querySelectorAll('.progress-step');
+                steps.forEach((stepEl, index) => {
+                    if (index + 1 < step) {
+                        stepEl.classList.add('completed-step');
+                        stepEl.classList.remove('active-step');
+                    } else if (index + 1 === step) {
+                        stepEl.classList.add('active-step');
+                        stepEl.classList.remove('completed-step');
+                    } else {
+                        stepEl.classList.remove('active-step', 'completed-step');
+                    }
+                });
+            }
+            
+            // Initialize tooltips
+            const tooltips = document.querySelectorAll('.tooltip');
+            tooltips.forEach(tooltip => {
+                tooltip.innerHTML += '<span class="tooltiptext">' + tooltip.getAttribute('data-tooltip') + '</span>';
+            });
+        });
+        
+        // Function to be called when changing steps
+        function updateActiveStep(step) {
+            const steps = document.querySelectorAll('.progress-step');
+            steps.forEach((el, i) => {
+                if (i+1 < step) {
+                    el.classList.add('completed-step');
+                    el.classList.remove('active-step');
+                } else if (i+1 === step) {
+                    el.classList.add('active-step');
+                    el.classList.remove('completed-step');
+                } else {
+                    el.classList.remove('active-step', 'completed-step');
+                }
+            });
+        }
+    </script>
+    """)
 
     # --- State Variables ---
     auth_state = gr.State({
         "email": None, "code": None, "code_sent": False,
-        "authenticated": False, "api_key": None, "api_key_set": False
+        "authenticated": False, "api_key": None, "api_key_set": False,
+        "current_step": 1, "dark_mode": False, "validation_error": None
     })
+    
+    # Top bar with dark mode toggle and progress indicator
+    with gr.Row(elem_classes="container"):
+        with gr.Column(scale=1):
+            dark_mode = gr.Checkbox(
+                label="Dark Mode", 
+                value=False, 
+                elem_id="dark-mode-toggle",
+                info="Toggle between light and dark theme"
+            )
+        
+        # Progress indicator
+        with gr.Column(scale=4):
+            gr.HTML("""
+            <div class="progress-container">
+                <div class="progress-bar"></div>
+                <div class="progress-step active-step">
+                    <div class="step-circle">1</div>
+                    <div class="step-text">Email</div>
+                </div>
+                <div class="progress-step">
+                    <div class="step-circle">2</div>
+                    <div class="step-text">Verify</div>
+                </div>
+                <div class="progress-step">
+                    <div class="step-circle">3</div>
+                    <div class="step-text">API Key</div>
+                </div>
+                <div class="progress-step">
+                    <div class="step-circle">4</div>
+                    <div class="step-text">Upload</div>
+                </div>
+            </div>
+            """)
 
-    # --- 1. Introduction ---
-    with gr.Column(visible=True) as intro_section:
+    with gr.Column(visible=True, elem_classes="container") as intro_section:
         gr.Markdown(f"""
         # **ProfileDash**
         {APP_VERSION}
@@ -928,129 +1194,429 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         Disclaimer: Use is at your own risk. Outputs may contain inaccuracies.
 
         **2-Step Authentication:** Enter your company email, then Google AI API Key.
-
         """)
 
-    # --- 2. Authentication ---
-    with gr.Column(visible=True) as auth_section:
-        auth_status = gr.Textbox(label="Authentication Status", value="Enter your email address below, then press Send Code", interactive=False)
-        with gr.Row(visible=True) as email_input_row:
-            email_input = gr.Textbox(label="Enter Your Email", placeholder=f"your.email@domain.com")
-            send_code_button = gr.Button("Send Code")
-        with gr.Row(visible=False) as code_input_row:
-            code_input = gr.Textbox(label="Enter 4-Digit Code")
-            verify_code_button = gr.Button("Verify Code")
+    # --- Authentication Section ---
+    with gr.Column(visible=True, elem_classes="container") as auth_section:
+        # Status message with validation feedback
+        auth_status = gr.Markdown("Enter your email address below, then press Send Code or hit Enter")
+        
+        # Email input section
+        with gr.Column(visible=True) as email_input_row:
+            email_input = gr.Textbox(
+                label="Enter Your Email", 
+                placeholder="your.email@domain.com",
+                info="Enter your company email address for authentication"
+            )
+            validation_feedback = gr.HTML(
+                visible=False, 
+                value='<div class="error-text">Please enter a valid email address</div>'
+            )
+            send_code_button = gr.Button(
+                "Send Code", 
+                variant="primary", 
+                scale=1
+            )
+            # Loading indicator for send code operation
+            send_code_loading = gr.HTML(
+                visible=False,
+                value='<div class="loading-spinner"></div> Sending code...'
+            )
+        
+        # Code verification section
+        with gr.Column(visible=False) as code_input_row:
+            code_input = gr.Textbox(
+                label="Enter 4-Digit Code",
+                placeholder="1234",
+                info="Enter the verification code sent to your email"
+            )
+            code_validation_feedback = gr.HTML(
+                visible=False, 
+                value='<div class="error-text">Invalid code</div>'
+            )
+            verify_code_button = gr.Button(
+                "Verify Code", 
+                variant="primary", 
+                scale=1
+            )
+            # Loading indicator for code verification
+            verify_code_loading = gr.HTML(
+                visible=False,
+                value='<div class="loading-spinner"></div> Verifying code...'
+            )
 
-    # --- 3. API Key Input ---
-    with gr.Column(visible=False) as api_key_section:
+    # --- API Key Input ---
+    with gr.Column(visible=False, elem_classes="container") as api_key_section:
         gr.Markdown("### Enter Your Google AI API Key")
-        api_key_input = gr.Textbox(label="API Key", type="password", placeholder="Paste key here")
-        gr.Markdown("""Get key from Google AI Studio:(https://aistudio.google.com/) (login via your Gmail account) ("Get API key") (Copy & paste).""")
-        submit_api_key_button = gr.Button("Submit API Key")
+        api_key_input = gr.Textbox(
+            label="API Key", 
+            type="password", 
+            placeholder="Paste key here",
+            info="Your Google AI API key from Google AI Studio"
+        )
+        
+        # Add tooltip for API Key help
+        gr.HTML("""
+        <div class="tooltip" data-tooltip="Get your API key from Google AI Studio by logging in with your Gmail account and clicking 'Get API key'">
+            Need help finding your API key? ℹ️
+        </div>
+        """)
+        
+        gr.Markdown("""Get key from [Google AI Studio](https://aistudio.google.com/) (login via your Gmail account)""")
+        
+        api_key_validation = gr.HTML(
+            visible=False,
+            value='<div class="error-text">API Key cannot be empty</div>'
+        )
+        
+        submit_api_key_button = gr.Button(
+            "Submit API Key", 
+            variant="primary", 
+            scale=1
+        )
+        
+        # Loading indicator for API key submission
+        api_key_loading = gr.HTML(
+            visible=False,
+            value='<div class="loading-spinner"></div> Verifying API key...'
+        )
 
-    # --- 4. Main Application Interface (REVISED - No HTML Preview) ---
-    with gr.Column(visible=False) as main_app_section:
+    # --- Main Application Interface ---
+    with gr.Column(visible=False, elem_classes="container") as main_app_section:
         gr.Markdown("# ProfileDash")
         gr.Markdown(f"Version {APP_VERSION}")
         gr.Markdown("Upload PDF documents. Generation takes ~10 mins. Keep device awake and this tab active.")
         gr.Markdown(f"Max upload size: {MAX_UPLOAD_MB} MB. Desktop: Ctrl/Cmd+Click for multiple files.")
-        gr.Markdown("Once profile is generated, download the file from your browser download folder.")
-
+        
+        # File upload with tooltip
+        pdf_upload = gr.File(
+            label="Upload PDF Documents",
+            file_count="multiple",
+            file_types=[".pdf"],
+            type="filepath",
+            info="Select one or more PDF files containing company information"
+        )
+        
+        # File validation feedback
+        file_validation = gr.HTML(
+            visible=False,
+            value='<div class="error-text">Please upload at least one PDF file</div>'
+        )
+        
+        # Generate button with loading state
         with gr.Row():
-            pdf_upload = gr.File(
-                label="Upload PDF Documents",
-                file_count="multiple",
-                file_types=[".pdf"],
-                type="filepath"
+            generate_button = gr.Button(
+                "Generate Profile", 
+                variant="primary", 
+                scale=1
             )
-            with gr.Column(scale=2):
-                status_output = gr.Textbox(label="Status / Log", lines=15, interactive=False, max_lines=20)
-                # progress_bar = gr.Progress(track_tqdm=True)
-                # Hidden File component to receive the temp file path & trigger JS
-                download_output = gr.File(
-                    label="Download Trigger", # Not user-visible
-                    visible=False,
-                    interactive=False,
-                    elem_id="download-trigger-file" # Crucial ID for JS
-                )
-                reset_button = gr.Button("Produce New Profile", visible=False)
+            generate_loading = gr.HTML(
+                visible=False,
+                value='<div class="loading-spinner"></div> Starting profile generation...'
+            )
+        
+        # Status output (initially hidden, shown after generate is clicked)
+        with gr.Column(visible=False, elem_id="status-output-container") as status_container:
+            gr.Markdown("### Generation Status")
+            status_output = gr.Textbox(
+                label="Status / Log", 
+                lines=10, 
+                interactive=False, 
+                max_lines=15
+            )
+            # Hidden File component to receive the temp file path & trigger JS
+            download_output = gr.File(
+                label="Download Trigger", # Not user-visible
+                visible=False,
+                interactive=False,
+                elem_id="download-trigger-file" # Crucial ID for JS
+            )
+            reset_button = gr.Button(
+                "Produce New Profile", 
+                visible=False, 
+                variant="secondary"
+            )
 
-        generate_button = gr.Button("Generate Profile", variant="primary")
-
-        # --- NO HTML Preview Component or CSS block here ---
-
-    # --- Event Handling Logic ---
-
-    # Auth and API Key handlers (Keep as before)
-    send_code_button.click(fn=send_auth_code, inputs=[email_input, auth_state], outputs=[auth_status, auth_state, email_input_row, code_input_row])
-    verify_code_button.click(fn=verify_auth_code, inputs=[code_input, auth_state], outputs=[auth_status, auth_state, auth_section, code_input_row, api_key_section])
-    submit_api_key_button.click(fn=handle_api_key, inputs=[api_key_input, auth_state], outputs=[auth_status, auth_state, api_key_section, main_app_section, intro_section])
-
-    # # Generate Button Click (REVISED Outputs and .then() for JS)
-    # generate_button.click(
-    #     fn=run_initial_generation,
-    #     inputs=[pdf_upload, auth_state],
-    #     # Outputs: Status Textbox, Hidden File Component, Reset Button Visibility
-    #     outputs=[status_output, download_output, reset_button],
-    #     show_progress="hidden" # Use the explicit progress bar component
-    # ).then( # Execute JS AFTER python function finishes and updates download_output
-    #     fn=None, # No python function needed here
-    #     inputs=None,
-    #     outputs=None,
-    #     # JavaScript to find the hidden download link and click it
-    #     js="""
-    #     () => {
-    #       // Wait briefly for Gradio to update the hidden File component's value (the temp file path)
-    #       setTimeout(() => {
-    #         console.log("JS: Attempting to trigger download...");
-    #         // Find the hidden wrapper div for the gr.File component using its elem_id
-    #         const fileWrapper = document.getElementById('download-trigger-file');
-    #         if (fileWrapper) {
-    #           // Find the actual download anchor (<a>) tag within the wrapper.
-    #           // Gradio usually structures it like this, but inspect element if needed.
-    #           const downloadLink = fileWrapper.querySelector('a[download]');
-    #           if (downloadLink && downloadLink.href && !downloadLink.href.endsWith('#') && downloadLink.href.includes('/file=')) {
-    #             // Check if href is valid (not just '#' or empty, contains '/file=')
-    #             console.log('JS: Found valid download link:', downloadLink.href);
-    #             try {
-    #                 // Trigger the click event on the link
-    #                 downloadLink.click();
-    #                 console.log('JS: Download click triggered.');
-    #             } catch (e) {
-    #                 console.error('JS: Error triggering download click:', e);
-    #                 alert('Error: Failed to automatically trigger the file download. Check browser console.');
-    #             }
-    #           } else {
-    #             console.error('JS: Download link (<a> tag with valid href) not found within #download-trigger-file. Auto-download failed.');
-    #             // Optional: Alert user if link is missing/invalid after generation completes
-    #             // alert('Error: Could not find the download link element. Auto-download failed.');
-    #           }
-    #         } else {
-    #           console.error('JS: Download trigger component (#download-trigger-file) not found. Auto-download failed.');
-    #           // alert('Error: Could not find the download component. Auto-download failed.');
-    #         }
-    #       }, 500); // 500ms delay seems reasonable, adjust if downloads fail occasionally
-    #     }
-    #     """
-    # )
-
-    # Generate Button Click (Now triggers background task)
-    generate_button.click(
-        fn=handle_generate_click, # Call the new handler that starts the thread
-        inputs=[pdf_upload, auth_state],
-        # Output only updates the status textbox initially.
-        # We list download_output and reset_button so Gradio knows the components exist,
-        # but the handle_generate_click function returns None and gr.update(visible=False) for them.
-        outputs=[status_output, download_output, reset_button], 
-        show_progress="hidden" # Progress bar isn't directly tied to this initial click anymore
+    # --- Enhanced Event Handling Logic ---
+    
+    # Dark mode toggle
+    def toggle_dark_mode(value, state):
+        state["dark_mode"] = value
+        return state
+    
+    dark_mode.change(
+        fn=toggle_dark_mode,
+        inputs=[dark_mode, auth_state],
+        outputs=[auth_state]
     )
-
+    
+    # --- Enhanced validation for email input ---
+    def validate_email(email, state):
+        import re
+        # Show loading indicator
+        loading_visible = gr.update(visible=True)
+        
+        # Basic validation
+        if not email or '@' not in email:
+            state["validation_error"] = "Please enter a valid email address"
+            return (
+                gr.update(visible=True, value='<div class="error-text">Please enter a valid email address</div>'),
+                state,
+                gr.update(visible=False)  # Hide loading after validation
+            )
+        
+        # More comprehensive validation with regex
+        email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+        if not email_pattern.match(email):
+            state["validation_error"] = "Please enter a valid email format"
+            return (
+                gr.update(visible=True, value='<div class="error-text">Please enter a valid email format</div>'),
+                state,
+                gr.update(visible=False)  # Hide loading after validation
+            )
+        
+        # Validation passed
+        state["validation_error"] = None
+        return (
+            gr.update(visible=False),  # Hide validation message
+            state,
+            loading_visible  # Keep loading visible for the actual send_code call
+        )
+    
+    # First validate email, then send code if valid
+    def enhanced_send_auth_code(email, state):
+        # First hide loading indicator
+        loading_visible = gr.update(visible=False)
+        
+        # If there was a validation error, don't proceed
+        if state.get("validation_error"):
+            return "Please fix the validation errors before continuing.", state, gr.update(visible=True), gr.update(visible=False), loading_visible, gr.update()
+        
+        # Call the original send_auth_code function
+        result, updated_state, email_row_update, code_row_update = send_auth_code(email, state)
+        
+        # Update progress indicator if successful
+        if updated_state.get("code_sent"):
+            updated_state["current_step"] = 2  # Move to step 2 (verification)
+            progress_update = f"""
+            <script>
+                updateActiveStep(2);
+            </script>
+            """
+        else:
+            progress_update = ""
+        
+        return result, updated_state, email_row_update, code_row_update, loading_visible, gr.update(value=progress_update)
+    
+    # --- Enhanced validation for verification code ---
+    def validate_code(code, state):
+        # Show loading indicator
+        loading_visible = gr.update(visible=True)
+        
+        # Basic validation
+        if not code or not code.isdigit() or len(code) != 4:
+            return (
+                gr.update(visible=True, value='<div class="error-text">Please enter a 4-digit code</div>'),
+                state,
+                gr.update(visible=False)  # Hide loading after validation
+            )
+        
+        # Validation passed
+        return (
+            gr.update(visible=False),  # Hide validation message
+            state,
+            loading_visible  # Keep loading visible for the actual verification call
+        )
+    
+    # First validate code, then verify if valid
+    def enhanced_verify_code(code, state):
+        # First hide loading indicator
+        loading_visible = gr.update(visible=False)
+        
+        # Call original verify_auth_code function
+        result, updated_state, auth_section_update, code_row_update, api_key_section_update = verify_auth_code(code, state)
+        
+        # Update progress indicator if successful
+        if updated_state.get("authenticated"):
+            updated_state["current_step"] = 3  # Move to step 3 (API key)
+            progress_update = f"""
+            <script>
+                updateActiveStep(3);
+            </script>
+            """
+        else:
+            progress_update = ""
+        
+        return result, updated_state, auth_section_update, code_row_update, api_key_section_update, loading_visible, gr.update(value=progress_update)
+    
+    # --- Enhanced validation for API key ---
+    def validate_api_key(api_key, state):
+        # Show loading indicator
+        loading_visible = gr.update(visible=True)
+        
+        # Basic validation
+        if not api_key or len(api_key.strip()) < 10:  # Simple length check
+            return (
+                gr.update(visible=True, value='<div class="error-text">Please enter a valid API key</div>'),
+                state,
+                gr.update(visible=False)  # Hide loading after validation
+            )
+        
+        # Validation passed
+        return (
+            gr.update(visible=False),  # Hide validation message
+            state,
+            loading_visible  # Keep loading visible for the actual API key submission
+        )
+    
+    # First validate API key, then submit if valid
+    def enhanced_handle_api_key(api_key, state):
+        # First hide loading indicator
+        loading_visible = gr.update(visible=False)
+        
+        # Call original handle_api_key function
+        result, updated_state, api_key_section_update, main_app_update, intro_section_update = handle_api_key(api_key, state)
+        
+        # Update progress indicator if successful
+        if updated_state.get("api_key_set"):
+            updated_state["current_step"] = 4  # Move to step 4 (upload)
+            progress_update = f"""
+            <script>
+                updateActiveStep(4);
+            </script>
+            """
+        else:
+            progress_update = ""
+        
+        return result, updated_state, api_key_section_update, main_app_update, intro_section_update, loading_visible, gr.update(value=progress_update)
+    
+    # --- Enhanced validation for file upload ---
+    def validate_file_upload(file_paths, state):
+        # Show loading indicator
+        loading_visible = gr.update(visible=True)
+        
+        # Check if files are provided
+        if not file_paths or (isinstance(file_paths, list) and len(file_paths) == 0):
+            return (
+                gr.update(visible=True, value='<div class="error-text">Please upload at least one PDF file</div>'),
+                state,
+                gr.update(visible=False)  # Hide loading after validation
+            )
+        
+        # Check file types
+        valid_files = True
+        if isinstance(file_paths, list):
+            for path in file_paths:
+                if not path.lower().endswith('.pdf'):
+                    valid_files = False
+                    break
+        else:
+            valid_files = file_paths.lower().endswith('.pdf')
+        
+        if not valid_files:
+            return (
+                gr.update(visible=True, value='<div class="error-text">Please upload only PDF files</div>'),
+                state,
+                gr.update(visible=False)  # Hide loading after validation
+            )
+        
+        # Validation passed
+        return (
+            gr.update(visible=False),  # Hide validation message
+            state,
+            loading_visible  # Keep loading visible for the actual generation
+        )
+    
+    # Enhanced generate click with validation
+    def enhanced_generate_click(file_paths, state):
+        # First hide loading indicator
+        loading_visible = gr.update(visible=False)
+        
+        # Call original generate function
+        result = handle_generate_click_with_status(file_paths, state)
+        
+        return [*result, loading_visible]
+    
+    # Connect the Email input chain (validate → show loading → send code)
+    email_input.submit(
+        fn=validate_email,
+        inputs=[email_input, auth_state],
+        outputs=[validation_feedback, auth_state, send_code_loading]
+    ).then(
+        fn=enhanced_send_auth_code,
+        inputs=[email_input, auth_state],
+        outputs=[auth_status, auth_state, email_input_row, code_input_row, send_code_loading, gr.HTML()]
+    )
+    
+    send_code_button.click(
+        fn=validate_email,
+        inputs=[email_input, auth_state],
+        outputs=[validation_feedback, auth_state, send_code_loading]
+    ).then(
+        fn=enhanced_send_auth_code,
+        inputs=[email_input, auth_state],
+        outputs=[auth_status, auth_state, email_input_row, code_input_row, send_code_loading, gr.HTML()]
+    )
+    
+    # Connect the Code verification chain (validate → show loading → verify)
+    code_input.submit(
+        fn=validate_code,
+        inputs=[code_input, auth_state],
+        outputs=[code_validation_feedback, auth_state, verify_code_loading]
+    ).then(
+        fn=enhanced_verify_code,
+        inputs=[code_input, auth_state],
+        outputs=[auth_status, auth_state, auth_section, code_input_row, api_key_section, verify_code_loading, gr.HTML()]
+    )
+    
+    verify_code_button.click(
+        fn=validate_code,
+        inputs=[code_input, auth_state],
+        outputs=[code_validation_feedback, auth_state, verify_code_loading]
+    ).then(
+        fn=enhanced_verify_code,
+        inputs=[code_input, auth_state],
+        outputs=[auth_status, auth_state, auth_section, code_input_row, api_key_section, verify_code_loading, gr.HTML()]
+    )
+    
+    # Connect the API key chain (validate → show loading → submit)
+    api_key_input.submit(
+        fn=validate_api_key,
+        inputs=[api_key_input, auth_state],
+        outputs=[api_key_validation, auth_state, api_key_loading]
+    ).then(
+        fn=enhanced_handle_api_key,
+        inputs=[api_key_input, auth_state],
+        outputs=[auth_status, auth_state, api_key_section, main_app_section, intro_section, api_key_loading, gr.HTML()]
+    )
+    
+    submit_api_key_button.click(
+        fn=validate_api_key,
+        inputs=[api_key_input, auth_state],
+        outputs=[api_key_validation, auth_state, api_key_loading]
+    ).then(
+        fn=enhanced_handle_api_key,
+        inputs=[api_key_input, auth_state],
+        outputs=[auth_status, auth_state, api_key_section, main_app_section, intro_section, api_key_loading, gr.HTML()]
+    )
+    
+    # Connect the Generate profile chain (validate → show loading → generate)
+    generate_button.click(
+        fn=validate_file_upload,
+        inputs=[pdf_upload, auth_state],
+        outputs=[file_validation, auth_state, generate_loading]
+    ).then(
+        fn=enhanced_generate_click,
+        inputs=[pdf_upload, auth_state],
+        outputs=[status_output, download_output, reset_button, status_container, generate_loading]
+    )
+    
     # Reset Button (REVISED Outputs)
     reset_button.click(
         fn=reset_interface,
         inputs=[],
-        # Reset Upload, Status, Download File component, Reset Button
-        outputs=[pdf_upload, status_output, download_output, reset_button]
+        # Reset Upload, Status, Download File component, Reset Button, Status Container
+        outputs=[pdf_upload, status_output, download_output, reset_button, status_container]
     )
 
 # --- Launch the Gradio app ---
