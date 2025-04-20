@@ -22,9 +22,10 @@ from src.section_processor import generate_initial_section
 from src.document_processor import load_document_content
 from src.html_generator import generate_full_html_profile, render_json_profile_to_html
 import html # Import html for escaping
+import re # Add re import
 
 # --- Configuration & Global Variables ---
-APP_VERSION = "v1.0.5"
+APP_VERSION = "v1.0.6"
 LOG_FILE = "user_log.json" # Note: This seems unused if logging is only to HF Dataset
 DATASET_REPO_ID = "ralfpilarczyk/ProfileDashData"
 PERMITTED_USERS_FILE = "permitted_users.json"
@@ -295,8 +296,28 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
             raise ValueError("Failed to process documents (base64).")
 
         first_filename = next(iter(uploaded_data.keys()))
-        company_name = os.path.splitext(first_filename)[0].replace('_', ' ')
-        append_bg_log(f"Company: {company_name}. Starting parallel generation...")
+        # Clean the company name derived from the filename
+        base_name = os.path.splitext(first_filename)[0].replace('_', ' ')
+        suffixes_to_remove = [" MDNA", " FS", " FY", " H1", " H2", " Q1", " Q2", " Q3", " Q4"] # Added H2
+        date_patterns = [
+            r'_\d{8}$',             # YYYYMMDD
+            r' \d{8}$',             # YYYYMMDD
+            r'_\d{6}$',             # YYYYMM
+            r' \d{6}$',             # YYYYMM
+            r'_\d{4}$',             # YYYY
+            r' \d{4}$'              # YYYY
+        ]
+        cleaned_name = base_name
+        for suffix in suffixes_to_remove:
+             # Use rstrip for case-insensitive check at the end
+             if cleaned_name.upper().endswith(suffix.upper()):
+                  cleaned_name = cleaned_name[:-len(suffix)]
+        # Remove date patterns from the end
+        for pattern in date_patterns:
+             cleaned_name = re.sub(pattern, '', cleaned_name)
+
+        company_name = cleaned_name.strip() # Assign cleaned name
+        append_bg_log(f"Company (cleaned): {company_name}. Starting parallel generation...") # Log cleaned name
 
         # --- 3. Generate Sections in Parallel ---
         total_sections = len(sections)
@@ -924,9 +945,10 @@ def reset_interface():
     print("Resetting interface elements.")
     return (
         None, # pdf_upload
-        "",   # status_output
+        "",   # status_output value reset
         gr.update(value=None, visible=False), # download_output
-        gr.update(visible=False) # reset_button
+        gr.update(visible=False), # reset_button hidden
+        gr.update(visible=False)  # status_output hidden
     )
 
 def handle_generate_click(file_paths, auth_state):
@@ -959,14 +981,15 @@ def handle_generate_click(file_paths, auth_state):
             save_log_entry_hf_dataset(user_email=user_email, event_data=log_event)
         except Exception as log_submit_e: print(f"Error logging RunSubmitted: {log_submit_e}")
 
-        # Return immediate feedback to the user in the UI
+        # Return immediate feedback to the user in the UI, making status and reset visible
         status_message = f"Profile generation for run ID '{run_id[:8]}' started. You will receive an email at {user_email} upon completion (approx. 10-20 mins)."
-        return status_message, None, gr.update(visible=False)
+        return status_message, None, gr.update(visible=True), gr.update(visible=True) # status_output value, download_output value, reset_button visibility, status_output visibility
 
     except Exception as thread_e:
         print(f"UI Thread: Error starting background thread for run {run_id}: {thread_e}")
         traceback.print_exc()
-        return f"Error: Could not start generation process. {thread_e}", None, gr.update(visible=False)
+        # Also show status/reset on error starting thread
+        return f"Error: Could not start generation process. {thread_e}", None, gr.update(visible=True), gr.update(visible=True)
 
 
 # --- Gradio Interface Definition ---
@@ -1033,25 +1056,29 @@ with gr.Blocks(theme=gr.themes.Soft(), css="""
         gr.Markdown(f"Max upload size: {MAX_UPLOAD_MB} MB. Desktop: Ctrl/Cmd+Click for multiple files.")
         gr.Markdown("Once profile is generated, download the file from your browser download folder (sent via email).")
 
-        with gr.Row():
-            pdf_upload = gr.File(
-                label="Upload PDF Documents",
-                file_count="multiple",
-                file_types=[".pdf"],
-                type="filepath" # Passes file paths to backend
-            )
-            with gr.Column(scale=2):
-                status_output = gr.Textbox(label="Status / Log", lines=15, interactive=False, max_lines=20)
-                # Hidden File component used internally if needed for triggering downloads (not currently used for direct download)
-                download_output = gr.File(
-                    label="Download Trigger",
-                    visible=False,
-                    interactive=False,
-                    elem_id="download-trigger-file"
-                )
-                reset_button = gr.Button("Produce New Profile", visible=False)
+        # Removed gr.Row(), placing components vertically
+        pdf_upload = gr.File(
+            label="Upload PDF Documents",
+            file_count="multiple",
+            file_types=[".pdf"],
+            type="filepath" # Passes file paths to backend
+        )
 
         generate_button = gr.Button("Generate Profile", variant="primary")
+
+        # Status output, initially hidden
+        status_output = gr.Textbox(label="Status / Log", lines=15, interactive=False, max_lines=20, visible=False)
+
+        # Reset button, initially hidden
+        reset_button = gr.Button("Produce New Profile", visible=False)
+
+        # Hidden File component used internally if needed (position doesn't matter visually)
+        download_output = gr.File(
+            label="Download Trigger",
+            visible=False,
+            interactive=False,
+            elem_id="download-trigger-file"
+        )
 
     # --- Event Handling Logic ---
 
@@ -1069,7 +1096,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css="""
     generate_button.click(
         fn=handle_generate_click,
         inputs=[pdf_upload, auth_state],
-        outputs=[status_output, download_output, reset_button], # Update status immediately
+        outputs=[status_output, download_output, reset_button, status_output], # Added status_output visibility update
         show_progress="hidden" # Progress handled by status updates / email
     )
 
@@ -1077,7 +1104,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css="""
     reset_button.click(
         fn=reset_interface,
         inputs=[],
-        outputs=[pdf_upload, status_output, download_output, reset_button]
+        outputs=[pdf_upload, status_output, download_output, reset_button, status_output] # Added status_output value/visibility update
     )
 
 # --- Application Launch ---

@@ -197,7 +197,7 @@ def render_json_profile_to_html(profile_data: dict) -> str:
             Generated on: {formatted_timestamp}
         </div>
         <div class="company-meta">
-            By ProfileDash {escaped_app_version} (Run ID: {html.escape(run_id[:8])})
+            By ProfileDash {escaped_app_version}
         </div>
         <div class="company-meta">
             Source Documents: {formatted_input_files}
@@ -849,28 +849,75 @@ def _render_analysis_text(text: str) -> str:
     for paragraph in paragraphs:
         paragraph_cleaned = paragraph.strip()
         if paragraph_cleaned:
-            # TODO (Optional Future Enhancement):
-            # Implement basic markdown handling here if needed
-            # (e.g., for lists *..., -..., bold **...**, italics *...*)
-            # For now, just escape and wrap in <p>
 
-            # Escape the paragraph content to prevent XSS
-            escaped_paragraph = html.escape(paragraph_cleaned)
+            # --- Basic Markdown to HTML Conversion ---
+            processed_para = paragraph_cleaned
 
-            # Replace literal escaped newlines within a paragraph with <br /> tags for readability
+            # 3. Handle Unordered Lists (lines starting with * or - space)
+            # Check if the entire paragraph block consists of list items.
+            lines = processed_para.splitlines()
+            list_items_content = []
+            is_list = False
+            if lines: # Ensure there are lines to check
+                is_list = True # Assume it's a list initially
+                for line in lines:
+                    match = re.match(r'^\s*[\*\-]\s+(.*)', line)
+                    if match:
+                        list_items_content.append(match.group(1).strip())
+                    else:
+                        is_list = False # If any line doesn't match, it's not a simple list block
+                        break
+
+            if is_list and list_items_content: # If it was confirmed to be a list and has content
+                 list_html = "<ul>\n" + "".join(f"<li>{html.escape(item)}</li>\n" for item in list_items_content) + "</ul>"
+                 # Apply footnote linking *within* the list items
+                 def replace_footnote_marker_list(match):
+                     ref_id = match.group(1)
+                     escaped_ref_id = html.escape(ref_id)
+                     return f'<sup><a href="#footnote-{escaped_ref_id}" style="text-decoration: none; color: inherit;">({escaped_ref_id})</a></sup>'
+                 # --- FIX: Use single backslash for escaping brackets in raw string ---
+                 list_html = re.sub(r'\[([\w-]+)\]', replace_footnote_marker_list, list_html)
+                 # --- End Fix ---
+
+                 html_string += list_html # Add list HTML directly
+                 continue # Skip the paragraph wrapping for this block
+
+            # --- Process Regular Paragraphs (Not Lists) ---
+
+            # 1. Handle Bold (**text** or __text__) -> <strong>
+            processed_para = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', processed_para)
+            processed_para = re.sub(r'__(.*?)__', r'<strong>\1</strong>', processed_para) # Alt bold
+
+            # 2. Handle Italics (*text* or _text_) -> <em>
+            # Important: Process italics *after* bold to avoid conflicts
+            processed_para = re.sub(r'\*(.*?)\*', r'<em>\1</em>', processed_para)
+            processed_para = re.sub(r'_(.*?)_', r'<em>\1</em>', processed_para) # Alt italic
+
+            # --- Final Processing for Non-List Paragraphs ---
+            # Escape remaining HTML special chars AFTER markdown conversion
+            escaped_paragraph = html.escape(processed_para)
+
+            # Selectively un-escape the tags we added
+            # This is necessary because html.escape() escaped our <strong> and <em> tags.
+            escaped_paragraph = escaped_paragraph.replace('&lt;strong&gt;', '<strong>').replace('&lt;/strong&gt;', '</strong>')
+            escaped_paragraph = escaped_paragraph.replace('&lt;em&gt;', '<em>').replace('&lt;/em&gt;', '</em>')
+
+            # Replace literal newlines within a paragraph with <br /> tags
             escaped_paragraph_with_br = escaped_paragraph.replace('\n', '<br />\n')
 
-            html_string += f"<p>{escaped_paragraph_with_br}</p>\n"
+            # Apply footnote linking (from previous step)
+            def replace_footnote_marker_para(match):
+                ref_id = match.group(1)
+                escaped_ref_id = html.escape(ref_id)
+                return f'<sup><a href="#footnote-{escaped_ref_id}" style="text-decoration: none; color: inherit;">({escaped_ref_id})</a></sup>'
+            # --- FIX: Use single backslash for escaping brackets in raw string ---
+            formatted_paragraph = re.sub(r'\[([\w-]+)\]', replace_footnote_marker_para, escaped_paragraph_with_br)
+            # --- End Fix ---
 
-    # Add a title only if there's content
-    if html_string:
-         # Use a less prominent heading or no heading if it flows naturally
-         # Option 1: Use H3
-         # return f"<h3>Detailed Analysis</h3>\n{html_string}"
-         # Option 2: Use subtle separator or just the text
-         return f'<div class="analysis-text-block">{html_string}</div>' # Wrap in a div for potential styling
-    else:
-         return ""
+            html_string += f"<p>{formatted_paragraph}</p>\n" # Wrap standard text in <p>
+
+    # Return raw paragraphs/lists
+    return html_string if html_string else ""
 
 def _render_footnotes(footnotes: list) -> str:
     """Renders the footnotes list as an HTML ordered list."""
@@ -891,20 +938,27 @@ def _render_footnotes(footnotes: list) -> str:
 
     html_string = '<div class="section-footnotes"><hr style="margin-top: 2em; margin-bottom: 1em; border-style: dashed; color: #ccc;"><h4>Footnotes</h4><ol style="font-size: 0.85em; color: #555; padding-left: 2em;">' # Add a visual separator and styling
 
+    footnote_counter = 1 # Initialize counter
     for fn in valid_footnotes:
-        fn_id = html.escape(str(fn.get('id', '?')))
+        # Use the original ID for linking, but the counter for display
+        original_fn_id = fn.get('id', f'gen_id_{footnote_counter}') # Fallback ID if original missing
+        fn_id_escaped = html.escape(str(original_fn_id)) # Escape original ID for attribute
         doc = html.escape(str(fn.get('document', 'N/A')))
         page = html.escape(str(fn.get('page', 'N/A')))
         section_info = html.escape(str(fn.get('section', '')))
 
-        # Construct the footnote text
-        footnote_text = f"[{fn_id}] {doc}"
+        # Construct the footnote text with superscript counter
+        footnote_number = footnote_counter
+        footnote_text = f"<sup>({footnote_number})</sup> {doc}" # Use counter for display
         if page and page != 'N/A':
             footnote_text += f", Page {page}"
         if section_info:
             footnote_text += f", Section: {section_info}"
 
-        html_string += f'<li style="margin-bottom: 0.4em;">{footnote_text}</li>' # Add some margin between footnotes
+        # Add original ID to the li element for linking
+        html_string += f'<li style="margin-bottom: 0.4em;" id="footnote-{fn_id_escaped}">{footnote_text}</li>'
+
+        footnote_counter += 1 # Increment counter
 
     html_string += '</ol></div>'
     return html_string
@@ -1204,7 +1258,7 @@ def generate_full_html_profile(company_name, sections, section_contents, app_ver
                 Generated on: {formatted_timestamp}
             </div>
             <div class="company-meta">
-                By ProfileDash {escaped_app_version} (Run ID: {html.escape(run_id[:8])})
+                By ProfileDash {escaped_app_version}
             </div>
             <div class="company-meta">
                 Source Documents: {formatted_input_files}
