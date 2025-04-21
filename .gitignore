@@ -13,6 +13,7 @@ __pycache__/
 
 # working files
 src/section_schemas.py
+app_schemas.py
 
 # log files
 user_log.json

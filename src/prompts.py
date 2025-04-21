@@ -18,11 +18,11 @@ analysis_specs = """
 - Provide a neutral and unbiased assessment. Critically evaluate information from company-issued documents (like annual reports or investor presentations) which may present a biased view.
 - Within each section, prioritize the most important aspects first (e.g., largest business segment, key decision-makers by influence), then proceed in declining order of importance.
 - Clearly reference the time period for all data points, either in table headers (e.g., "Revenue (FY2023)") or in parentheses immediately following the data point (e.g., "$100M (2023)").
-- If you calculate data (e.g., EBITDA Margin = EBITDA / Revenues), clearly label it with "[calc]" (e.g., "EBITDA Margin [calc]").
-- Use footnotes ONLY for direct, verbatim quotes from the source documents. Indicate the quote clearly (e.g., using blockquote or quotation marks) and provide a concise reference (e.g., "[Source: DocName, Page X]"). Do NOT footnote general statements or summaries. A full footnote list is NOT required at the end of the section.
+- If you calculate data (e.g., EBITDA Margin = EBITDA / Revenues), clearly label it with "(calc)" (e.g., "EBITDA Margin (calc)").
+- Use footnotes ONLY for direct, verbatim quotes or tables from the source documents. Indicate the quote clearly (e.g., using blockquote or quotation marks) and provide a concise reference (e.g., "Source: DocName, Page X"). Do NOT footnote general statements or summaries or inferences.
 - Present financial data consistently. If EBITDA is not directly provided, calculate it as Operating Profit + Depreciation and Amortization, labeling it appropriately (e.g., "EBITDA (calc)").
 - Focus on the most recent financial periods and forward-looking statements or projections, as these are typically most relevant.
-- Adopt a highly analytical, concise, and fact-oriented writing style. Avoid jargon where possible, but use precise financial/business terms where necessary.
+- Adopt a highly analytical, concise, and fact-oriented writing style. Avoid jargon and abbreviations where possible, but use precise business terms where necessary.
 - Generate insightful analysis that goes beyond simple data extraction. Highlight non-obvious connections, implications, or potential risks/opportunities derived *logically* from the provided facts. Briefly explain the reasoning for these insights.
 - Evaluation Criteria:
     1. Factual Accuracy & Document Grounding: Is information correct AND directly supported by the provided documents?
@@ -92,14 +92,3 @@ Use HTML formatting STRICTLY as follows:
 
 </format_instructions>
 """
-
-# --- Kept for potential future use, but not used by current section_processor ---
-# Define instruction prompt with delimiter
-# delimiter = "####"
-# def get_initial_instruction(company_profile_specs):
-#     """Generate the initial instruction with provided company profile specs"""
-#     return f"""
-# Please create a company profile... (rest of function) ...
-# """
-# --- End Unused Function ---
-# --- END OF FILE src/prompts.py ---
