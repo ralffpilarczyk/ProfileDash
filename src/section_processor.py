@@ -135,14 +135,3 @@ IMPORTANT: Generate *only* the HTML content for section {section_num}, starting 
         error_content = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">ERROR: Could not generate initial content: {type(e).__name__}</p></div>'
         # Instead of re-raising, return the error content. App.py will check for <p class="error">.
         return section_num, error_content
-
-
-# --- Refinement Function (Kept structurally but not called by app.py) ---
-# def refine_section_content(section, initial_content, documents, persona, analysis_specs, output_format):
-#    """Performs Fact and Insight refinement sequence on initial content."""
-#    # ... (Keep internal logic but ensure it doesn't rely on removed globals/timers)
-#    # ... (This function would need 'documents' passed if activated)
-#    print(f"Section Processor: refine_section_content called for section {section['number']} (Currently Inactive in Gradio App)")
-#    # Return initial content for now if called accidentally
-#    return initial_content
-# --- END OF FILE src/section_processor.py ---

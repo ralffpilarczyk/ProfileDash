@@ -24,6 +24,10 @@ LOG_FILE = "user_log.json"
 DATASET_REPO_ID = "ralfpilarczyk/ProfileDashData" 
 PERMITTED_USERS_FILE = "permitted_users.json"
 HF_TOKEN = os.environ.get("HF_DATA_TOKEN") 
+MAX_WORKERS = 3 # From your original script
+MAX_UPLOAD_MB = 20 # Keep restriction reasonable
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+ALLOWED_DOMAIN = "sc.com" # Restrict access
 
 # Initialize the Hub API client 
 try:
@@ -92,11 +96,7 @@ except Exception as general_e:
     traceback.print_exc()
     raise
 
-# --- Configuration ---
-MAX_WORKERS = 3 # From your original script
-MAX_UPLOAD_MB = 20 # Keep restriction reasonable
-MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
-ALLOWED_DOMAIN = "sc.com" # Restrict access
+
 
 # --- Helper Functions ---
 
@@ -1145,43 +1145,9 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     auth_state = gr.State({
         "email": None, "code": None, "code_sent": False,
         "authenticated": False, "api_key": None, "api_key_set": False,
-        "current_step": 1, "dark_mode": False, "validation_error": None
+        "current_step": 1, "validation_error": None
     })
     
-    # Top bar with dark mode toggle and progress indicator
-    with gr.Row(elem_classes="container"):
-        with gr.Column(scale=1):
-            dark_mode = gr.Checkbox(
-                label="Dark Mode", 
-                value=False, 
-                elem_id="dark-mode-toggle",
-                info="Toggle between light and dark theme"
-            )
-        
-        # Progress indicator
-        with gr.Column(scale=4):
-            gr.HTML("""
-            <div class="progress-container">
-                <div class="progress-bar"></div>
-                <div class="progress-step active-step">
-                    <div class="step-circle">1</div>
-                    <div class="step-text">Email</div>
-                </div>
-                <div class="progress-step">
-                    <div class="step-circle">2</div>
-                    <div class="step-text">Verify</div>
-                </div>
-                <div class="progress-step">
-                    <div class="step-circle">3</div>
-                    <div class="step-text">API Key</div>
-                </div>
-                <div class="progress-step">
-                    <div class="step-circle">4</div>
-                    <div class="step-text">Upload</div>
-                </div>
-            </div>
-            """)
-
     with gr.Column(visible=True, elem_classes="container") as intro_section:
         gr.Markdown(f"""
         # **ProfileDash**
@@ -1288,13 +1254,15 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         gr.Markdown("Upload PDF documents. Generation takes ~10 mins. Keep device awake and this tab active.")
         gr.Markdown(f"Max upload size: {MAX_UPLOAD_MB} MB. Desktop: Ctrl/Cmd+Click for multiple files.")
         
-        # File upload with tooltip
+        # Add information about file upload
+        gr.Markdown("Select one or more PDF files containing company information")
+        
+        # File upload with enhanced label
         pdf_upload = gr.File(
             label="Upload PDF Documents",
             file_count="multiple",
             file_types=[".pdf"],
-            type="filepath",
-            info="Select one or more PDF files containing company information"
+            type="filepath"
         )
         
         # File validation feedback
@@ -1338,17 +1306,6 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             )
 
     # --- Enhanced Event Handling Logic ---
-    
-    # Dark mode toggle
-    def toggle_dark_mode(value, state):
-        state["dark_mode"] = value
-        return state
-    
-    dark_mode.change(
-        fn=toggle_dark_mode,
-        inputs=[dark_mode, auth_state],
-        outputs=[auth_state]
-    )
     
     # --- Enhanced validation for email input ---
     def validate_email(email, state):
