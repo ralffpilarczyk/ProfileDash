@@ -2,7 +2,6 @@ import gradio as gr
 import time
 import os
 import traceback # For error logging
-import random
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tempfile
@@ -19,7 +18,7 @@ from sendgrid.helpers.mail import (
 )
 
 # --- Variables ---
-APP_VERSION = "v1.0.7"
+APP_VERSION = "v1.1.0"
 LOG_FILE = "user_log.json"
 DATASET_REPO_ID = "ralfpilarczyk/ProfileDashData" 
 PERMITTED_USERS_FILE = "permitted_users.json"
@@ -28,6 +27,12 @@ MAX_WORKERS = 3 # From your original script
 MAX_UPLOAD_MB = 20 # Keep restriction reasonable
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 ALLOWED_DOMAIN = "sc.com" # Restrict access
+
+# --- Get Google API Key ---
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY') # Fetch the key from environment/secrets
+if not GOOGLE_API_KEY:
+    print("WARNING: GOOGLE_API_KEY secret not found. Profile generation will not work.")
+# --- END Get Google API Key ---
 
 # Initialize the Hub API client 
 try:
@@ -99,11 +104,6 @@ except Exception as general_e:
 
 
 # --- Helper Functions ---
-
-def generate_auth_code():
-    """Generates a 4-digit authentication code."""
-    return str(random.randint(1000, 9999))
-
 
 def get_permitted_users():
     """
@@ -217,7 +217,7 @@ def save_log_entry_hf_dataset(user_email: str, event_data: dict):
 # --- END:  Logging Function ---
 
 # --- START: Complete Background Task Function (with Direct String Base64 Attachment) ---
-def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, temp_file_paths: list):
+def _background_generate_and_notify(run_id: str, user_email: str, temp_file_paths: list):
     """
     Performs the entire profile generation in a background thread, 
     saves results to dataset, attempts to email result as Base64 attachment, 
@@ -252,10 +252,12 @@ def _background_generate_and_notify(run_id: str, user_email: str, api_key: str, 
     try:
         # --- 1. Configure Google AI ---
         append_bg_log("Configuring Google AI SDK...")
-        if not api_key:
-            raise ValueError("ERROR: API Key was not provided.")
+        # Check the global variable directly
+        if not GOOGLE_API_KEY:
+            raise ValueError("ERROR: API Key was not found in environment.") # Adjusted error message
         try:
-            genai.configure(api_key=api_key)
+            # Use the global variable directly
+            genai.configure(api_key=GOOGLE_API_KEY)
             append_bg_log("Google AI SDK Configured OK.")
         except Exception as config_e:
              error_msg = f"CRITICAL ERROR configuring Google AI SDK: {type(config_e).__name__} - {str(config_e)}"
@@ -661,229 +663,116 @@ def save_profile_hf_dataset(profile_content: str, content_type: str, run_id: str
         return None 
 
 # --- Authentication Backend ---
-# --- START: Revised send_auth_code function ---
-def send_auth_code(email, auth_state):
+# (Function formerly known as send_auth_code)
+def verify_email_and_check_key(email, auth_state):
     """
-    Validates email against permitted list from dataset, sends code via SendGrid, 
-    logs events, and updates state.
+    Validates email against permitted list, checks for API key,
+    logs events, and updates state to grant access.
     """
     # 1. Basic Email Format Check
     if not email or '@' not in email:
-        return "Please enter a valid email address.", auth_state, gr.update(visible=True), gr.update(visible=False)
+        # Return: Status message, original auth_state, keep email input visible, keep main app hidden
+        return "Please enter a valid email address.", auth_state, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
 
     # 2. Check Permission using Dataset File
     print(f"Checking permissions for email: {email}")
-    email_lower = email.lower() # Use lowercase for all checks
+    email_lower = email.lower()
     is_permitted = False
-    
-    # Attempt to get the configuration from the dataset
-    permitted_users_config = get_permitted_users() # Assumes get_permitted_users() is defined above this
-    
+    permitted_users_config = get_permitted_users()
+
     if permitted_users_config:
         allowed_emails = permitted_users_config.get("allowed_emails", [])
         allowed_domains = permitted_users_config.get("allowed_domains", [])
-        
-        # Check specific email list first
         if email_lower in allowed_emails:
             is_permitted = True
-            print(f"Email {email} permitted via allowed_emails list.")
+            print(f"Email {email} permitted via allowed_emails list.") # Added print
         else:
-            # If not specific, check allowed domains
             try:
                 domain = email_lower.split('@')[1]
                 if domain in allowed_domains:
                     is_permitted = True
-                    print(f"Email {email} permitted via allowed_domains list ({domain}).")
+                    print(f"Email {email} permitted via allowed_domains list ({domain}).") # Added print
             except IndexError:
-                # Invalid format, already caught, but handles defensively
-                print(f"Invalid email format encountered during domain check: {email}")
-                is_permitted = False 
+                 print(f"Invalid email format encountered during domain check: {email}") # Added print
+                 is_permitted = False
     else:
-        # Fallback case if get_permitted_users failed critically (should be rare with its internal fallback)
-        print("CRITICAL ERROR: Could not retrieve or determine permitted users configuration.")
-        return "Error checking permissions. Please try again later.", auth_state, gr.update(visible=True), gr.update(visible=False)
+        print("CRITICAL ERROR: Could not retrieve permitted users configuration.")
+        # Return: Error status, original state, keep email visible, keep main app hidden
+        return "Error checking permissions. Please try again later.", auth_state, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
 
-    # If permission check failed, deny access and log it
     if not is_permitted:
          print(f"Access denied for email: {email}")
-         # Log denial attempt
-         try:
-            log_event = {
-                "event": "AuthAttemptDenied", 
-                "reason": "Email/Domain not permitted",
-                "appVersion": APP_VERSION
-                }
-            save_log_entry_hf_dataset(user_email=email, event_data=log_event) # Assumes save_log_entry... defined
-         except Exception as log_denial_e: 
-             print(f"Error logging AuthAttemptDenied: {log_denial_e}")
-         
-         # Return generic denial message to user
-         return "Access denied. Your email address is not authorized for this application.", auth_state, gr.update(visible=True), gr.update(visible=False)
-
-    # 3. Proceed if Permitted: Check SendGrid Config
-    print(f"Email {email} is permitted. Checking SendGrid config...")
-    if not SENDGRID_API_KEY or not sg:
-        print("Warning: SendGrid not configured or failed to initialize. Using dummy code '1234'.")
-        code = "1234"
-        auth_state["email"] = email
-        auth_state["code"] = code
-        auth_state["code_sent"] = True # Mark as sent for testing flow
-        # Log dummy code usage
-        try:
-             log_event = {"event": "AuthCodeDummyUsed", "reason": "SendGrid not configured"}
-             save_log_entry_hf_dataset(user_email=email, event_data=log_event)
-        except Exception as log_dummy_e: print(f"Error logging AuthCodeDummyUsed: {log_dummy_e}")
-        return "SendGrid not configured. For testing, use code 1234.", auth_state, gr.update(visible=False), gr.update(visible=True)
-
-    # 4. Generate and Prepare Email (if SendGrid OK)
-    print(f"Generating auth code for {email}...")
-    code = generate_auth_code()
-    auth_state["email"] = email
-    auth_state["code"] = code
-    auth_state["code_sent"] = False # Mark as not sent *yet*
-
-    subject = "Your ProfileDash Authentication Code"
-    html_content = f"""
-    <div style="font-family: sans-serif; padding: 20px; max-width: 400px; margin: auto; border: 1px solid #ddd; border-radius: 5px;">
-        <h2 style="text-align: center; color: #333;">ProfileDash Authentication</h2>
-        <p style="text-align: center; color: #555;">Please use the following code to complete your sign-in:</p>
-        <div style="font-size: 36px; font-weight: bold; text-align: center; margin: 20px 0; padding: 10px; background-color: #f0f0f0; border-radius: 3px; letter-spacing: 5px;">
-            {code}
-        </div>
-        <p style="font-size: 12px; color: #888; text-align: center;">If you did not request this code, you can safely ignore this email.</p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="font-size: 10px; color: #aaa; text-align: center;">ProfileDash - Automated Company Profiling</p>
-    </div>
-    """
-    # Ensure Mail, Email, To, Content are imported
-    user_message = Mail(
-        from_email=Email(SENDER_EMAIL, "ProfileDash"),
-        to_emails=To(email),
-        subject=subject,
-        html_content=Content("text/html", html_content)
-    )
-
-    # 5. Attempt to Send Email & Log Outcome
-    try:
-        print(f"Attempting to send auth code email via SendGrid to {email}...")
-        response = sg.client.mail.send.post(request_body=user_message.get())
-        
-        if 200 <= response.status_code < 300:
-            print(f"Auth code sent successfully to {email}. Status: {response.status_code}")
-            auth_state["code_sent"] = True
-            # Log Success to Dataset
-            try:
-                log_event = {
-                    "event": "AuthCodeSent", "status": "Success", "appVersion": APP_VERSION 
-                }
-                save_log_entry_hf_dataset(user_email=email, event_data=log_event)
-            except Exception as dataset_log_e:
-                print(f"Non-critical error logging AuthCodeSent success to dataset: {dataset_log_e}")
-            # Return success message to user
-            return f"Authentication code sent to {email}. Enter code below and press Verify Code.", auth_state, gr.update(visible=False), gr.update(visible=True)
-
-        else:
-            # Log SendGrid Failure
-            print(f"Failed to send auth code to {email}. Status: {response.status_code}, Body: {response.body}")
-            try:
-                log_event = {
-                    "event": "AuthCodeSendFailed", "status": "Failure",
-                    "statusCode": response.status_code,
-                    "responseBody": str(response.body)[:500], 
-                    "appVersion": APP_VERSION
-                }
-                save_log_entry_hf_dataset(user_email=email, event_data=log_event)
-            except Exception as dataset_log_e:
-                print(f"Non-critical error logging AuthCodeSendFailed to dataset: {dataset_log_e}")
-            # Return error message to user
-            return f"Error sending authentication code (Status: {response.status_code}). Try again later or contact support.", auth_state, gr.update(visible=True), gr.update(visible=False)
-
-    except Exception as e:
-        # Log Exception during SendGrid call
-        print(f"Exception sending email to {email}: {e}")
-        traceback.print_exc()
-        try:
-            log_event = {
-                "event": "AuthCodeSendException", "status": "Exception",
-                "errorType": type(e).__name__, "errorMessage": str(e),
-                "appVersion": APP_VERSION
-            }
+         try: # Log denial
+            log_event = {"event": "AuthAttemptDenied", "reason": "Email/Domain not permitted", "appVersion": APP_VERSION}
             save_log_entry_hf_dataset(user_email=email, event_data=log_event)
-        except Exception as dataset_log_e:
-            print(f"Non-critical error logging AuthCodeSendException to dataset: {dataset_log_e}")
-        # Return error message to user
-        return f"An error occurred while attempting to send the authentication email: {e}. Please try again.", auth_state, gr.update(visible=True), gr.update(visible=False)
+         except Exception as log_denial_e: print(f"Error logging AuthAttemptDenied: {log_denial_e}")
+         # Return: Denial status, original state, keep email visible, keep main app hidden
+         # Return generic denial message to user
+         return "Access denied. Your email address is not authorized.", auth_state, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
 
-# --- END: Revised send_auth_code function ---
+    # 3. Check if API Key was loaded successfully at startup
+    print(f"Email {email} permitted. Checking for API Key...")
+    if not GOOGLE_API_KEY:
+        print(f"CRITICAL ERROR: GOOGLE_API_KEY not found for permitted user {email}.")
+        try: # Log key missing error
+            log_event = {"event": "AuthAttemptFailed", "reason": "GOOGLE_API_KEY not found", "appVersion": APP_VERSION}
+            save_log_entry_hf_dataset(user_email=email, event_data=log_event)
+        except Exception as log_key_e: print(f"Error logging AuthAttemptFailed (API Key): {log_key_e}")
+        # Return: API Key error status, original state, keep email visible, keep main app hidden
+        return "Configuration Error: API key not found. Cannot proceed.", auth_state, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
 
-def verify_auth_code(entered_code, auth_state):
-    """Verifies the entered code against the stored code."""
-    print(f"Verifying code. Current auth_state: {auth_state}") # Debug print
-    if not auth_state.get("code_sent"):
-        return "Please request an authentication code first.", auth_state, gr.update(visible=True), gr.update(visible=True), gr.update(visible=False)
+    # 4. All checks passed: Authenticate user in state
+    print(f"Email {email} verified and API key found. Authenticating.")
+    auth_state["email"] = email
+    auth_state["authenticated"] = True
+    try: # Log success
+         log_event = {"event": "AuthSuccess", "appVersion": APP_VERSION}
+         save_log_entry_hf_dataset(user_email=email, event_data=log_event)
+    except Exception as log_succ_e: print(f"Error logging AuthSuccess: {log_succ_e}")
 
-    stored_code = auth_state.get("code")
-    if entered_code == stored_code:
-        auth_state["authenticated"] = True
-        print(f"Authentication successful for {auth_state.get('email')}")
-        return "Authentication successful. Please enter your API Key.", auth_state, gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)
-    else:
-        return "Invalid authentication code. Please try again.", auth_state, gr.update(visible=True), gr.update(visible=True), gr.update(visible=False)
-
-# --- API Key Handling ---
-def handle_api_key(api_key, auth_state):
-    """Stores the API key in state and proceeds to main app."""
-    if not api_key:
-        return "API Key cannot be empty.", auth_state, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
-    auth_state["api_key"] = api_key
-    auth_state["api_key_set"] = True
-    print(f"API Key received and stored for {auth_state.get('email')}.")
-    print(f"API Key set. Current auth_state: {auth_state}") # Debug print
-    return "API Key accepted. Upload documents to generate profile.", auth_state, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
+    # Return: Success message, UPDATED state, HIDE email section, SHOW main app section
+    return f"Email {email} verified. Proceed to upload documents.", auth_state, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
 
 # --- Reset Function (Revised for new UI structure) ---
 def reset_interface():
     """Resets the main app interface components for a new profile generation."""
     print("Resetting interface elements.")
     return (
-        None, # pdf_upload
-        "",   # status_output
+        gr.update(value=None, visible=True),  # pdf_upload (make visible)
+        gr.update(visible=True),              # generate_row (make visible)
+        gr.update(visible=False),             # generation_inprogress_message (hide)
+        "",                                   # status_output (clear text)
         gr.update(value=None, visible=False), # download_output (reset and hide)
-        gr.update(visible=False), # reset_button itself hide
-        gr.update(visible=False)  # status_container hide
-    )
+        gr.update(visible=False),             # reset_button (hide itself)
+        gr.update(visible=False)              # status_container (hide)
+    ) # Now returns 7 values
 
+# --- REVISED handle_generate_click function ---
 def handle_generate_click(file_paths, auth_state):
     """Starts the background generation thread and returns immediate feedback."""
     user_email = auth_state.get('email')
-    api_key = auth_state.get('api_key')
+    # api_key = auth_state.get('api_key') # DELETE THIS LINE
     run_id = str(uuid.uuid4()) # Generate ID here to return to user
 
-    if not user_email or not api_key or not file_paths:
+    # Modify the check: Check for 'authenticated' flag and user_email
+    if not auth_state.get('authenticated') or not user_email or not file_paths:
          # Handle missing prerequisites immediately
-         return "Error: Missing email, API key, or uploaded files.", None, gr.update(visible=False) # Status, download_output, reset_button
-    
+         return "Error: Not authenticated or missing uploaded files.", None, gr.update(visible=False) # Status, download_output, reset_button
+
     # Make a copy of temp file paths if passing paths
-    # If passing content, extract bytes here
     temp_paths_copy = list(file_paths) if isinstance(file_paths, list) else [file_paths]
-    
-    # Create a snapshot of auth_state needed by the thread (avoid passing the whole mutable state) 
-    
-    # auth_state_snapshot = {
-    #     'email': user_email,
-    #     # Add any other relevant state if needed by background task
-    # }
 
     print(f"UI Thread: Starting background task for run {run_id} for user {user_email}")
     try:
         # Create and start the background thread
         thread = threading.Thread(
-            target=_background_generate_and_notify, 
-            args=(run_id, user_email, api_key, temp_paths_copy),
+            target=_background_generate_and_notify,
+             # REMOVE api_key from args list below
+            args=(run_id, user_email, temp_paths_copy),
             daemon=True # Allows main program to exit even if thread is running (optional)
         )
         thread.start()
-        
+
         # --- Log RunSubmitted (optional but good) ---
         try:
             # Reuse metadata logic from background task start if desired
@@ -895,18 +784,37 @@ def handle_generate_click(file_paths, auth_state):
         except Exception as log_submit_e: print(f"Error logging RunSubmitted: {log_submit_e}")
         # --- End Log RunSubmitted ---
 
-        # Return immediate feedback to the user
-        status_message = f"Profile generation for run ID '{run_id[:8]}' started. You will receive an email at {user_email} upon completion (approx. 10-20 mins)."
-        # Return: status message, None for download, hide reset button initially
-        return status_message, None, gr.update(visible=False) 
-    
+        # Update the status message string below:
+        status_message = f"**Profile generation has started. The profile will be emailed to {user_email} upon completion (approx. 10-20 mins). You can close this window now.**"
+
+        # Return values to update UI (remains the same structure)
+        return (
+            gr.update(visible=False),             # pdf_upload
+            gr.update(visible=False),             # generate_row
+            gr.update(visible=True),              # generation_inprogress_message
+            status_message,                       # status_output
+            None,                                 # download_output
+            gr.update(visible=False),             # reset_button
+            gr.update(visible=False)              # generate_loading
+        )
+
     except Exception as thread_e:
+        # Return values on error need to be adjusted too, to match the expected number (7)
+        # Keep inputs visible, show error in status, hide message/download/reset/loading
         print(f"UI Thread: Error starting background thread for run {run_id}: {thread_e}")
         traceback.print_exc()
-        return f"Error: Could not start generation process. {thread_e}", None, gr.update(visible=False)
-    
+        error_message = f"Error: Could not start generation process. {thread_e}"
+        return (
+            gr.update(),                          # pdf_upload (no change)
+            gr.update(),                          # generate_row (no change)
+            gr.update(visible=False),             # generation_inprogress_message
+            error_message,                        # status_output
+            None,                                 # download_output
+            gr.update(visible=False),             # reset_button
+            gr.update(visible=False)              # generate_loading
+        )
 
-# --- Modify handle_generate_click to also show the status container ---
+# --- REVISED handle_generate_click_with_status function ---
 def handle_generate_click_with_status(file_paths, auth_state):
     """Enhanced version of handle_generate_click that also manages UI visibility"""
     # Show the status container first
@@ -922,65 +830,9 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     <style>
         /* Responsive container */
         .container {
-            max-width: 800px !important;
+            max-width: 500px !important;
             margin: 0 auto !important;
             padding: 0 15px !important;
-        }
-        
-        /* Progress indicator */
-        .progress-container {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 20px;
-            position: relative;
-        }
-        .progress-step {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            z-index: 1;
-            flex: 1;
-        }
-        .step-circle {
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            background-color: #ddd;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 8px;
-            font-weight: bold;
-            color: #555;
-            border: 2px solid transparent;
-            transition: all 0.3s ease;
-        }
-        .step-text {
-            font-size: 12px;
-            color: #777;
-            text-align: center;
-            transition: all 0.3s ease;
-        }
-        .active-step .step-circle {
-            background-color: #2196F3;
-            color: white;
-            border-color: #0d6efd;
-        }
-        .active-step .step-text {
-            color: #2196F3;
-            font-weight: bold;
-        }
-        .completed-step .step-circle {
-            background-color: #4CAF50;
-            color: white;
-        }
-        .progress-bar {
-            position: absolute;
-            top: 15px;
-            height: 2px;
-            background-color: #ddd;
-            width: 100%;
-            z-index: 0;
         }
         
         /* Loading indicator */
@@ -1100,52 +952,19 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 }
             }
             
-            // Update progress indicator
-            function updateProgress(step) {
-                const steps = document.querySelectorAll('.progress-step');
-                steps.forEach((stepEl, index) => {
-                    if (index + 1 < step) {
-                        stepEl.classList.add('completed-step');
-                        stepEl.classList.remove('active-step');
-                    } else if (index + 1 === step) {
-                        stepEl.classList.add('active-step');
-                        stepEl.classList.remove('completed-step');
-                    } else {
-                        stepEl.classList.remove('active-step', 'completed-step');
-                    }
-                });
-            }
-            
             // Initialize tooltips
             const tooltips = document.querySelectorAll('.tooltip');
             tooltips.forEach(tooltip => {
                 tooltip.innerHTML += '<span class="tooltiptext">' + tooltip.getAttribute('data-tooltip') + '</span>';
             });
         });
-        
-        // Function to be called when changing steps
-        function updateActiveStep(step) {
-            const steps = document.querySelectorAll('.progress-step');
-            steps.forEach((el, i) => {
-                if (i+1 < step) {
-                    el.classList.add('completed-step');
-                    el.classList.remove('active-step');
-                } else if (i+1 === step) {
-                    el.classList.add('active-step');
-                    el.classList.remove('completed-step');
-                } else {
-                    el.classList.remove('active-step', 'completed-step');
-                }
-            });
-        }
     </script>
     """)
 
     # --- State Variables ---
     auth_state = gr.State({
-        "email": None, "code": None, "code_sent": False,
-        "authenticated": False, "api_key": None, "api_key_set": False,
-        "current_step": 1, "validation_error": None
+        "email": None,         # Will store verified email
+        "authenticated": False # Will flag successful verification + API key check
     })
     
     with gr.Column(visible=True, elem_classes="container") as intro_section:
@@ -1159,98 +978,34 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         
         Disclaimer: Use is at your own risk. Outputs may contain inaccuracies.
 
-        **2-Step Authentication:** Enter your company email, then Google AI API Key.
         """)
 
     # --- Authentication Section ---
     with gr.Column(visible=True, elem_classes="container") as auth_section:
         # Status message with validation feedback
-        auth_status = gr.Markdown("Enter your email address below, then press Send Code or hit Enter")
+        auth_status = gr.Markdown("Enter your email address below, then press Verify Email or hit Enter")
         
         # Email input section
         with gr.Column(visible=True) as email_input_row:
             email_input = gr.Textbox(
                 label="Enter Your Email", 
-                placeholder="your.email@domain.com",
-                info="Enter your company email address for authentication"
+                placeholder="your.email@domain.com"
             )
-            validation_feedback = gr.HTML(
-                visible=False, 
-                value='<div class="error-text">Please enter a valid email address</div>'
-            )
-            send_code_button = gr.Button(
-                "Send Code", 
+            # Rename button variable and update text
+            verify_email_button = gr.Button(
+                "Verify Email", # <-- Renamed text
                 variant="primary", 
                 scale=1
             )
-            # Loading indicator for send code operation
-            send_code_loading = gr.HTML(
+            # Rename loading variable and update text
+            verify_email_loading = gr.HTML(
                 visible=False,
-                value='<div class="loading-spinner"></div> Sending code...'
+                value='<div class="loading-spinner"></div> Verifying email...', # <-- Updated text
+                elem_id="verify-email-loading-id" # <-- ADD THIS LINE
             )
-        
-        # Code verification section
-        with gr.Column(visible=False) as code_input_row:
-            code_input = gr.Textbox(
-                label="Enter 4-Digit Code",
-                placeholder="1234",
-                info="Enter the verification code sent to your email"
-            )
-            code_validation_feedback = gr.HTML(
-                visible=False, 
-                value='<div class="error-text">Invalid code</div>'
-            )
-            verify_code_button = gr.Button(
-                "Verify Code", 
-                variant="primary", 
-                scale=1
-            )
-            # Loading indicator for code verification
-            verify_code_loading = gr.HTML(
-                visible=False,
-                value='<div class="loading-spinner"></div> Verifying code...'
-            )
-
-    # --- API Key Input ---
-    with gr.Column(visible=False, elem_classes="container") as api_key_section:
-        gr.Markdown("### Enter Your Google AI API Key")
-        api_key_input = gr.Textbox(
-            label="API Key", 
-            type="password", 
-            placeholder="Paste key here",
-            info="Your Google AI API key from Google AI Studio"
-        )
-        
-        # Add tooltip for API Key help
-        gr.HTML("""
-        <div class="tooltip" data-tooltip="Get your API key from Google AI Studio by logging in with your Gmail account and clicking 'Get API key'">
-            Need help finding your API key? ℹ️
-        </div>
-        """)
-        
-        gr.Markdown("""Get key from [Google AI Studio](https://aistudio.google.com/) (login via your Gmail account)""")
-        
-        api_key_validation = gr.HTML(
-            visible=False,
-            value='<div class="error-text">API Key cannot be empty</div>'
-        )
-        
-        submit_api_key_button = gr.Button(
-            "Submit API Key", 
-            variant="primary", 
-            scale=1
-        )
-        
-        # Loading indicator for API key submission
-        api_key_loading = gr.HTML(
-            visible=False,
-            value='<div class="loading-spinner"></div> Verifying API key...'
-        )
-
+                
     # --- Main Application Interface ---
     with gr.Column(visible=False, elem_classes="container") as main_app_section:
-        gr.Markdown("# ProfileDash")
-        gr.Markdown(f"Version {APP_VERSION}")
         gr.Markdown("Upload PDF documents. Generation takes ~10 mins. Keep device awake and this tab active.")
         gr.Markdown(f"Max upload size: {MAX_UPLOAD_MB} MB. Desktop: Ctrl/Cmd+Click for multiple files.")
         
@@ -1272,7 +1027,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         )
         
         # Generate button with loading state
-        with gr.Row():
+        with gr.Row() as generate_row:
             generate_button = gr.Button(
                 "Generate Profile", 
                 variant="primary", 
@@ -1282,7 +1037,13 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 visible=False,
                 value='<div class="loading-spinner"></div> Starting profile generation...'
             )
-        
+
+        # Add the new message component (initially hidden)
+        generation_inprogress_message = gr.Markdown(
+            "**Profile is being generated and will be emailed to you.**",
+            visible=False
+        )
+
         # Status output (initially hidden, shown after generate is clicked)
         with gr.Column(visible=False, elem_id="status-output-container") as status_container:
             gr.Markdown("### Generation Status")
@@ -1305,279 +1066,57 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 variant="secondary"
             )
 
-    # --- Enhanced Event Handling Logic ---
-    
-    # --- Enhanced validation for email input ---
-    def validate_email(email, state):
-        import re
-        # Show loading indicator
-        loading_visible = gr.update(visible=True)
-        
-        # Basic validation
-        if not email or '@' not in email:
-            state["validation_error"] = "Please enter a valid email address"
-            return (
-                gr.update(visible=True, value='<div class="error-text">Please enter a valid email address</div>'),
-                state,
-                gr.update(visible=False)  # Hide loading after validation
-            )
-        
-        # More comprehensive validation with regex
-        email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
-        if not email_pattern.match(email):
-            state["validation_error"] = "Please enter a valid email format"
-            return (
-                gr.update(visible=True, value='<div class="error-text">Please enter a valid email format</div>'),
-                state,
-                gr.update(visible=False)  # Hide loading after validation
-            )
-        
-        # Validation passed
-        state["validation_error"] = None
-        return (
-            gr.update(visible=False),  # Hide validation message
-            state,
-            loading_visible  # Keep loading visible for the actual send_code call
-        )
-    
-    # First validate email, then send code if valid
-    def enhanced_send_auth_code(email, state):
-        # First hide loading indicator
-        loading_visible = gr.update(visible=False)
-        
-        # If there was a validation error, don't proceed
-        if state.get("validation_error"):
-            return "Please fix the validation errors before continuing.", state, gr.update(visible=True), gr.update(visible=False), loading_visible, gr.update()
-        
-        # Call the original send_auth_code function
-        result, updated_state, email_row_update, code_row_update = send_auth_code(email, state)
-        
-        # Update progress indicator if successful
-        if updated_state.get("code_sent"):
-            updated_state["current_step"] = 2  # Move to step 2 (verification)
-            progress_update = f"""
-            <script>
-                updateActiveStep(2);
-            </script>
-            """
-        else:
-            progress_update = ""
-        
-        return result, updated_state, email_row_update, code_row_update, loading_visible, gr.update(value=progress_update)
-    
-    # --- Enhanced validation for verification code ---
-    def validate_code(code, state):
-        # Show loading indicator
-        loading_visible = gr.update(visible=True)
-        
-        # Basic validation
-        if not code or not code.isdigit() or len(code) != 4:
-            return (
-                gr.update(visible=True, value='<div class="error-text">Please enter a 4-digit code</div>'),
-                state,
-                gr.update(visible=False)  # Hide loading after validation
-            )
-        
-        # Validation passed
-        return (
-            gr.update(visible=False),  # Hide validation message
-            state,
-            loading_visible  # Keep loading visible for the actual verification call
-        )
-    
-    # First validate code, then verify if valid
-    def enhanced_verify_code(code, state):
-        # First hide loading indicator
-        loading_visible = gr.update(visible=False)
-        
-        # Call original verify_auth_code function
-        result, updated_state, auth_section_update, code_row_update, api_key_section_update = verify_auth_code(code, state)
-        
-        # Update progress indicator if successful
-        if updated_state.get("authenticated"):
-            updated_state["current_step"] = 3  # Move to step 3 (API key)
-            progress_update = f"""
-            <script>
-                updateActiveStep(3);
-            </script>
-            """
-        else:
-            progress_update = ""
-        
-        return result, updated_state, auth_section_update, code_row_update, api_key_section_update, loading_visible, gr.update(value=progress_update)
-    
-    # --- Enhanced validation for API key ---
-    def validate_api_key(api_key, state):
-        # Show loading indicator
-        loading_visible = gr.update(visible=True)
-        
-        # Basic validation
-        if not api_key or len(api_key.strip()) < 10:  # Simple length check
-            return (
-                gr.update(visible=True, value='<div class="error-text">Please enter a valid API key</div>'),
-                state,
-                gr.update(visible=False)  # Hide loading after validation
-            )
-        
-        # Validation passed
-        return (
-            gr.update(visible=False),  # Hide validation message
-            state,
-            loading_visible  # Keep loading visible for the actual API key submission
-        )
-    
-    # First validate API key, then submit if valid
-    def enhanced_handle_api_key(api_key, state):
-        # First hide loading indicator
-        loading_visible = gr.update(visible=False)
-        
-        # Call original handle_api_key function
-        result, updated_state, api_key_section_update, main_app_update, intro_section_update = handle_api_key(api_key, state)
-        
-        # Update progress indicator if successful
-        if updated_state.get("api_key_set"):
-            updated_state["current_step"] = 4  # Move to step 4 (upload)
-            progress_update = f"""
-            <script>
-                updateActiveStep(4);
-            </script>
-            """
-        else:
-            progress_update = ""
-        
-        return result, updated_state, api_key_section_update, main_app_update, intro_section_update, loading_visible, gr.update(value=progress_update)
-    
-    # --- Enhanced validation for file upload ---
-    def validate_file_upload(file_paths, state):
-        # Show loading indicator
-        loading_visible = gr.update(visible=True)
-        
-        # Check if files are provided
-        if not file_paths or (isinstance(file_paths, list) and len(file_paths) == 0):
-            return (
-                gr.update(visible=True, value='<div class="error-text">Please upload at least one PDF file</div>'),
-                state,
-                gr.update(visible=False)  # Hide loading after validation
-            )
-        
-        # Check file types
-        valid_files = True
-        if isinstance(file_paths, list):
-            for path in file_paths:
-                if not path.lower().endswith('.pdf'):
-                    valid_files = False
-                    break
-        else:
-            valid_files = file_paths.lower().endswith('.pdf')
-        
-        if not valid_files:
-            return (
-                gr.update(visible=True, value='<div class="error-text">Please upload only PDF files</div>'),
-                state,
-                gr.update(visible=False)  # Hide loading after validation
-            )
-        
-        # Validation passed
-        return (
-            gr.update(visible=False),  # Hide validation message
-            state,
-            loading_visible  # Keep loading visible for the actual generation
-        )
-    
-    # Enhanced generate click with validation
-    def enhanced_generate_click(file_paths, state):
-        # First hide loading indicator
-        loading_visible = gr.update(visible=False)
-        
-        # Call original generate function
-        result = handle_generate_click_with_status(file_paths, state)
-        
-        return [*result, loading_visible]
-    
-    # Connect the Email input chain (validate → show loading → send code)
+    # --- Simplified Event Connections ---
+
+    # Connect Email input submit/button click to the new verification function
+    verify_email_button.click(
+        fn=verify_email_and_check_key,
+        inputs=[email_input, auth_state],
+        # Outputs: Status text, state, hide auth_section, show main_app_section, loading indicator
+        outputs=[auth_status, auth_state, auth_section, main_app_section, verify_email_loading]
+        # JS removed for now for simplicity, can be added back if loading indicator doesn't show reliably
+    )
     email_input.submit(
-        fn=validate_email,
+        fn=verify_email_and_check_key,
         inputs=[email_input, auth_state],
-        outputs=[validation_feedback, auth_state, send_code_loading]
-    ).then(
-        fn=enhanced_send_auth_code,
-        inputs=[email_input, auth_state],
-        outputs=[auth_status, auth_state, email_input_row, code_input_row, send_code_loading, gr.HTML()]
+        outputs=[auth_status, auth_state, auth_section, main_app_section, verify_email_loading]
+        # JS removed for now
     )
-    
-    send_code_button.click(
-        fn=validate_email,
-        inputs=[email_input, auth_state],
-        outputs=[validation_feedback, auth_state, send_code_loading]
-    ).then(
-        fn=enhanced_send_auth_code,
-        inputs=[email_input, auth_state],
-        outputs=[auth_status, auth_state, email_input_row, code_input_row, send_code_loading, gr.HTML()]
-    )
-    
-    # Connect the Code verification chain (validate → show loading → verify)
-    code_input.submit(
-        fn=validate_code,
-        inputs=[code_input, auth_state],
-        outputs=[code_validation_feedback, auth_state, verify_code_loading]
-    ).then(
-        fn=enhanced_verify_code,
-        inputs=[code_input, auth_state],
-        outputs=[auth_status, auth_state, auth_section, code_input_row, api_key_section, verify_code_loading, gr.HTML()]
-    )
-    
-    verify_code_button.click(
-        fn=validate_code,
-        inputs=[code_input, auth_state],
-        outputs=[code_validation_feedback, auth_state, verify_code_loading]
-    ).then(
-        fn=enhanced_verify_code,
-        inputs=[code_input, auth_state],
-        outputs=[auth_status, auth_state, auth_section, code_input_row, api_key_section, verify_code_loading, gr.HTML()]
-    )
-    
-    # Connect the API key chain (validate → show loading → submit)
-    api_key_input.submit(
-        fn=validate_api_key,
-        inputs=[api_key_input, auth_state],
-        outputs=[api_key_validation, auth_state, api_key_loading]
-    ).then(
-        fn=enhanced_handle_api_key,
-        inputs=[api_key_input, auth_state],
-        outputs=[auth_status, auth_state, api_key_section, main_app_section, intro_section, api_key_loading, gr.HTML()]
-    )
-    
-    submit_api_key_button.click(
-        fn=validate_api_key,
-        inputs=[api_key_input, auth_state],
-        outputs=[api_key_validation, auth_state, api_key_loading]
-    ).then(
-        fn=enhanced_handle_api_key,
-        inputs=[api_key_input, auth_state],
-        outputs=[auth_status, auth_state, api_key_section, main_app_section, intro_section, api_key_loading, gr.HTML()]
-    )
-    
-    # Connect the Generate profile chain (validate → show loading → generate)
+
+    # Connect Generate profile button
     generate_button.click(
-        fn=validate_file_upload,
+        fn=handle_generate_click_with_status, # Returns 8 values now
         inputs=[pdf_upload, auth_state],
-        outputs=[file_validation, auth_state, generate_loading]
-    ).then(
-        fn=enhanced_generate_click,
-        inputs=[pdf_upload, auth_state],
-        outputs=[status_output, download_output, reset_button, status_container, generate_loading]
+        # List 8 output components in the correct order
+        outputs=[
+            pdf_upload,                     # 1st return value
+            generate_row,                   # 2nd return value
+            generation_inprogress_message,  # 3rd return value
+            status_output,                  # 4th return value
+            download_output,                # 5th return value
+            reset_button,                   # 6th return value
+            generate_loading,               # 7th return value
+            status_container                # 8th return value (controls container visibility)
+        ]
     )
-    
-    # Reset Button (REVISED Outputs)
+
+    # Reset Button connection remains the same logic, but outputs list changes
     reset_button.click(
         fn=reset_interface,
         inputs=[],
-        # Reset Upload, Status, Download File component, Reset Button, Status Container
-        outputs=[pdf_upload, status_output, download_output, reset_button, status_container]
+        # Update outputs list to match the 7 return values from reset_interface
+        outputs=[
+            pdf_upload,                    # Corresponds to 1st return value
+            generate_row,                  # Corresponds to 2nd return value
+            generation_inprogress_message, # Corresponds to 3rd return value
+            status_output,                 # Corresponds to 4th return value
+            download_output,               # Corresponds to 5th return value
+            reset_button,                  # Corresponds to 6th return value
+            status_container               # Corresponds to 7th return value
+        ]
     )
 
 # --- Launch the Gradio app ---
 if __name__ == "__main__":
     demo.queue()
-    demo.launch(share=False, server_name="0.0.0.0") # Allow local network access
-# --- END OF REVISED app.py ---
+    demo.launch(share=False, server_name="0.0.0.0") # Allow local network access# --- END OF REVISED app.py ---
