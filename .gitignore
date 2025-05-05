@@ -10,10 +10,11 @@ src/old/
 __pycache__/
 *.py[cod]
 *$py.class
+api_cache.json
+src/api_cache.json
 
 # working files
 src/section_schemas.py
-app_schemas.py
 
 # log files
 user_log.json

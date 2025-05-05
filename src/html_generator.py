@@ -381,8 +381,6 @@ def generate_full_html_profile(company_name, sections, section_contents, app_ver
     toc_end = """            </ul>
         </div>
 
-        <button onclick="window.print()" class="print-button no-print">Print Profile</button>
-
         <div class="content">
 """
 
