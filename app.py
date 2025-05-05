@@ -18,7 +18,7 @@ from sendgrid.helpers.mail import (
 )
 
 # --- Variables ---
-APP_VERSION = "v1.1.0"
+APP_VERSION = "v1.1.1"
 LOG_FILE = "user_log.json"
 DATASET_REPO_ID = "ralfpilarczyk/ProfileDashData" 
 PERMITTED_USERS_FILE = "permitted_users.json"
@@ -785,7 +785,7 @@ def handle_generate_click(file_paths, auth_state):
         # --- End Log RunSubmitted ---
 
         # Update the status message string below:
-        status_message = f"**Profile generation has started. The profile will be emailed to {user_email} upon completion (approx. 10-20 mins). You can close this window now.**"
+        status_message = f"Profile generation has started. The profile will be emailed to {user_email} upon completion (approx. 10-20 mins). You can close this window now."
 
         # Return values to update UI (remains the same structure)
         return (
@@ -976,7 +976,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
         Generates company profiles by analyzing uploaded PDFs using Google Gemini.
         
-        Disclaimer: Use is at your own risk. Outputs may contain inaccuracies.
+        Disclaimer: Use at your own risk. Outputs may contain inaccuracies.
 
         """)
 
@@ -1006,11 +1006,8 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 
     # --- Main Application Interface ---
     with gr.Column(visible=False, elem_classes="container") as main_app_section:
-        gr.Markdown("Upload PDF documents. Generation takes ~10 mins. Keep device awake and this tab active.")
-        gr.Markdown(f"Max upload size: {MAX_UPLOAD_MB} MB. Desktop: Ctrl/Cmd+Click for multiple files.")
-        
         # Add information about file upload
-        gr.Markdown("Select one or more PDF files containing company information")
+        gr.Markdown("Select one or more PDF files containing company information. Maximum of 20MB in aggregate.")
         
         # File upload with enhanced label
         pdf_upload = gr.File(
@@ -1048,7 +1045,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         with gr.Column(visible=False, elem_id="status-output-container") as status_container:
             gr.Markdown("### Generation Status")
             status_output = gr.Textbox(
-                label="Status / Log", 
+                label="Status Log", 
                 lines=10, 
                 interactive=False, 
                 max_lines=15
