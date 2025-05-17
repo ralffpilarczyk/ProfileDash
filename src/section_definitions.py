@@ -48,7 +48,6 @@ sections = [
                 "For each data point, note any anomalies, any disconnects between the data point and management's commentary, and any industry benchmarks mentioned."
                 "Always include precise footnotes with exact sources, document references, page numbers, and sections for each data point."
     },
-
     {
         "number": 3,
         "title": "Key Customers",
