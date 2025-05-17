@@ -100,7 +100,7 @@ def save_section_hf_dataset(
     sanitized_email = user_email.replace('@', '_at_').replace('.', '_')
     file_extension = "html"
 
-    base_filename = f"section_{section_num}{filename_suffix}"
+    base_filename = f"section_{section_num:02d}{filename_suffix}"
     section_filename_in_repo = f"profiles/{sanitized_email}/{run_id}/{base_filename}.{file_extension}"
 
     try:

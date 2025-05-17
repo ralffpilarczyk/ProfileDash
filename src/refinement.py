@@ -1,7 +1,6 @@
 """
 Refinement module for ProfileDash
 Handles both fact-checking and insight refinement for generated content.
-(Currently inactive in Gradio App, kept for potential future use)
 """
 import traceback
 # Use relative imports consistently
@@ -28,9 +27,9 @@ def get_fact_critique(initial_instruction, answer, documents):
         f"Context: {initial_instruction}\n"
         f"Draft Answer to Critique:\n```html\n{answer}\n```\n\n"
         "Please critique the draft answer based *only* on the provided documents. "
-        "Focus **exclusively on factual correctness and verifiability** against the documents. "
-        "Identify specific statements in the draft that are unsupported or contradicted by the documents. "
-        "Do not critique style, insight, or completeness unless it relates to factual accuracy."
+        "Focus **exclusively on completeness,factual correctness and verifiability** against the documents. "
+        "Identify specific gaps towards the initial instructions. Identify statements in the draft that are unsupported or contradicted by the documents. "
+        "Do not critique style or insight unless it relates to factual accuracy."
         "Output only the critique text."
     )
 
@@ -76,9 +75,10 @@ def fact_improvement_response(initial_instruction, answer, fact_critique_text, d
         f"Original Draft Answer:\n```html\n{answer}\n```\n\n"
         f"Fact Critique (points to address):\n```\n{fact_critique_text}\n```\n\n"
         "INSTRUCTIONS: Revise the 'Original Draft Answer' based *only* on the provided documents and addressing *only* the factual issues raised in the 'Fact Critique'. "
-        "Do NOT add new information not present in the documents. "
+        "Add new information if needed to address the critique. Otherwise, do NOT add new information not present in the documents. "
         "Do NOT change the style or structure significantly unless required to fix a factual error. "
-        "Ensure the revised answer remains grounded in the provided documents. "
+        "Ensure the revised answer remains grounded in the provided documents."
+        "Do not reduce the amount of data or information in the original answer unless required to fix a factual error."
         "Output *only* the revised HTML for the section, adhering to the original HTML requirements."
     )
 
@@ -183,6 +183,7 @@ def insight_improvement_response(initial_instruction, answer, insight_critique_t
         f"Insight Critique (points to address):\n```\n{insight_critique_text}\n```\n\n"
         "INSTRUCTIONS: Revise the 'Original Draft Answer' based *only* on the provided documents, specifically addressing the strategic and analytical points raised in the 'Insight Critique'. "
         "Enhance the analysis, provide deeper reasoning, and draw non-obvious connections supported by the documents. "
+        "Do NOT reduce the amount of data or information in the original answer unless required to fix a factual error."
         "Do NOT add new factual information not present in the documents. Maintain factual accuracy. "
         "Output *only* the revised HTML for the section, adhering to the original HTML requirements."
     )

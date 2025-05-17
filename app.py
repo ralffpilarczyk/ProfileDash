@@ -1,3 +1,13 @@
+# ============================================================================
+# ProfileDash - Main Application
+# ============================================================================
+# A Gradio-based web application that generates company profiles by analyzing
+# uploaded PDFs using Google Gemini.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Imports and Dependencies
+# ----------------------------------------------------------------------------
 import gradio as gr
 import time
 import os
@@ -19,8 +29,11 @@ from sendgrid.helpers.mail import (
 from src.background_processor import execute_full_profile_workflow
 from src.background_processor import save_log_entry_hf_dataset
 
-# --- Variables ---
-APP_VERSION = "v1.1.1"
+# ----------------------------------------------------------------------------
+# Configuration and Constants
+# ----------------------------------------------------------------------------
+# Application version and identifiers
+APP_VERSION = "v1.2.0"
 LOG_FILE = "user_log.json"
 DATASET_REPO_ID = "ralfpilarczyk/ProfileDashData" 
 PERMITTED_USERS_FILE = "permitted_users.json"
@@ -36,6 +49,9 @@ if not GOOGLE_API_KEY:
     print("WARNING: GOOGLE_API_KEY not found. Profile generation will not work.")
 # --- END Get Google API Key ---
 
+# ----------------------------------------------------------------------------
+# Service Initialization
+# ----------------------------------------------------------------------------
 # Initialize the Hub API client 
 try:
     if HF_TOKEN:
@@ -103,15 +119,22 @@ except Exception as general_e:
     traceback.print_exc()
     raise
 
-
-
-# --- Helper Functions ---
-
+# ----------------------------------------------------------------------------
+# Helper Functions
+# ----------------------------------------------------------------------------
 def get_permitted_users():
     """
-    Downloads and parses the permitted users config from the HF Dataset.
-    Returns a dictionary with 'allowed_domains' and 'allowed_emails' lists (lowercase).
-    Returns fallback defaults if download/parsing fails or config is invalid.
+    Retrieves and validates the list of permitted users from the Hugging Face dataset.
+    
+    Returns:
+        dict: A dictionary containing:
+            - allowed_domains: List of permitted email domains (lowercase)
+            - allowed_emails: List of permitted email addresses (lowercase)
+    
+    Fallback:
+        Returns default configuration if retrieval fails:
+        - allowed_domains: [ALLOWED_DOMAIN]
+        - allowed_emails: []
     """
     # Define fallback defaults INSIDE the function
     # You can keep ALLOWED_DOMAIN defined globally if you still want it as a code-level default
@@ -174,8 +197,15 @@ def get_permitted_users():
 
 def verify_email_and_check_key(email, auth_state):
     """
-    Validates email against permitted list, checks for API key,
-    logs events, and updates state to grant access.
+    Validates user email and API key configuration for authentication.
+    
+    Args:
+        email (str): User's email address
+        auth_state (dict): Current authentication state
+        
+    Returns:
+        tuple: (status_message, updated_auth_state, auth_section_visibility, 
+                main_app_visibility, loading_indicator_visibility)
     """
     # 1. Basic Email Format Check
     if not email or '@' not in email:
@@ -241,9 +271,13 @@ def verify_email_and_check_key(email, auth_state):
     # Return: Success message, UPDATED state, HIDE email section, SHOW main app section
     return f"Email {email} verified. Proceed to upload documents.", auth_state, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
 
-# --- Reset Function (Revised for new UI structure) ---
 def reset_interface():
-    """Resets the main app interface components for a new profile generation."""
+    """
+    Resets the main application interface to its initial state.
+    
+    Returns:
+        tuple: Updated states for all interface components
+    """
     print("Resetting interface elements.")
     return (
         gr.update(value=None, visible=True),  # pdf_upload (make visible)
@@ -255,9 +289,17 @@ def reset_interface():
         gr.update(visible=False)              # status_container (hide)
     ) # Now returns 7 values
 
-# --- REVISED handle_generate_click function ---
 def handle_generate_click(file_paths, auth_state):
-    """Starts the background generation thread and returns immediate feedback."""
+    """
+    Initiates the profile generation process in a background thread.
+    
+    Args:
+        file_paths (list): List of paths to uploaded PDF files
+        auth_state (dict): Current authentication state
+        
+    Returns:
+        tuple: Updated states for UI components and generation status
+    """
     user_email = auth_state.get('email')
     # api_key = auth_state.get('api_key') # DELETE THIS LINE
     run_id = str(uuid.uuid4()) # Generate ID here to return to user
@@ -337,14 +379,25 @@ def handle_generate_click(file_paths, auth_state):
             gr.update(visible=False)              # generate_loading
         )
 
-# --- REVISED handle_generate_click_with_status function ---
 def handle_generate_click_with_status(file_paths, auth_state):
-    """Enhanced version of handle_generate_click that also manages UI visibility"""
+    """
+    Enhanced version of handle_generate_click that includes status container management.
+    
+    Args:
+        file_paths (list): List of paths to uploaded PDF files
+        auth_state (dict): Current authentication state
+        
+    Returns:
+        tuple: Updated states for all UI components including status container
+    """
     # Show the status container first
     result = handle_generate_click(file_paths, auth_state)
     # Return result plus visibility update for status container
     return [*result, gr.update(visible=True)]
 
+# ----------------------------------------------------------------------------
+# Gradio Interface Definition
+# ----------------------------------------------------------------------------
 # --- Build the Gradio Blocks Interface (ENHANCED UI/UX) ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
 

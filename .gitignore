@@ -1,10 +1,10 @@
-# Updated file
 # Environment variables
 .env
 .cursorignore
 
 # old files
 src/old/
+*.bak
 
 # Python cache files
 __pycache__/
@@ -19,6 +19,7 @@ src/section_schemas.py
 # log files
 user_log.json
 permitted_users.json
+
 # C extensions
 *.so
 
