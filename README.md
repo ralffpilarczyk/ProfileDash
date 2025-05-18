@@ -18,11 +18,11 @@ ProfileDash automatically generates comprehensive company profiles by analyzing 
 *   **LLM-Powered Analysis:** Leverages Google's Gemini models to analyze content from PDF documents.
 *   **Gradio Web Interface:** Simple UI for uploading files and monitoring progress.
 *   **Multi-PDF Upload:** Supports uploading multiple PDF documents for analysis.
-*   **Email Authentication:** Requires authentication using a company email address (domain restricted) via a code sent using SendGrid.
+*   **Email Verification:** Requires a company email address for access (domain restricted).
 *   **User-Provided API Key:** Users must provide their own Google AI API key after successful authentication.
 *   **Parallel Processing:** Generates different profile sections concurrently for faster results.
 *   **Base64 PDF Handling:** Encodes PDFs in base64 for direct processing by the multimodal Gemini API.
-*   **Automatic Download:** Automatically triggers the download of the final generated HTML profile upon completion.
+*   **Email Delivery:** The generated HTML profile is emailed to you as an attachment when processing completes.
 
 ## Prerequisites
 
@@ -84,21 +84,19 @@ SENDGRID_API_KEY=your_actual_sendgrid_api_key_here
 ## Authentication Flow
 
 1.  **Enter Email:** Provide your company email address (must match the `ALLOWED_DOMAIN` set in `app.py`, currently `sc.com`).
-2.  **Send Code:** Click "Send Code".
-3.  **Receive Code:** Check your email inbox (and spam folder) for a 4-digit authentication code. (If SendGrid is not configured correctly, the app will display a message and allow using the test code `1234`).
-4.  **Verify Code:** Enter the received code and click "Verify Code".
-5.  **Enter API Key:** Upon successful verification, you will be prompted to enter your Google AI API Key.
+2.  **Verify Email:** Click "Verify Email". The app checks the domain or allowed list.
+3.  **Enter API Key:** If your email is permitted, you will be prompted to enter your Google AI API Key.
     *   You can get a key from [Google AI Studio](https://aistudio.google.com/) by signing in, clicking "Get API key", and creating one in a new project. **Copy the key immediately** as it won't be shown again.
-6.  **Submit API Key:** Paste your key and click "Submit API Key".
+4.  **Submit API Key:** Paste your key and click "Submit API Key".
 
 ## Usage Instructions
 
 1.  **Upload PDFs:** Once authenticated and the API key is accepted, use the "Upload PDF Documents" area to select the relevant PDF files.
     *   *Desktop:* Hold Ctrl (Windows) or Cmd (Mac) while clicking to select multiple files.
     *   *Mobile:* Multi-file selection may be limited. Look for a "Select" option within your phone's file browser if available, otherwise you may need to upload sequentially (less ideal) or use a desktop.
-2.  **Generate:** Click the "Generate Profile & Download" button.
+2.  **Generate:** Click the "Generate Profile" button.
 3.  **Monitor:** Observe the "Status / Log" area and the progress bar for updates. Profile generation can take 10-15 minutes depending on the number/size of documents and API responsiveness.
-4.  **Download:** Once processing is complete, your browser should automatically initiate the download of the generated HTML file (e.g., `CompanyName_Profile_Timestamp.html`). Check your browser's downloads.
+4.  **Receive Email:** When processing completes, you will receive an email with the generated HTML profile attached (e.g., `CompanyName_Profile_Timestamp.html`).
 5.  **Reset:** After a profile is generated (or if you want to start over), click the "Produce New Profile" button to clear the file input and status log for a new run. Your authentication and API key will remain active for the session.
 
 ## Disclaimer
