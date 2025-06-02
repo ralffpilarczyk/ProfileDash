@@ -32,7 +32,9 @@ from .refinement import (
     get_insight_critique,
     insight_improvement_response
 )
-
+from .lc_chains import get_appendix_data_extraction_chain, get_html_appendix_generation_chain, get_gemini_llm
+# from .lc_models import AppendixDataItem, AppendixStructuredData # Potentially not needed directly here if chains handle it
+from .prompts import output_format # Make sure this is imported for HTML rules
 # --- Moved HF Data Saving Functions ---
 # These now explicitly require api, HF_TOKEN, DATASET_REPO_ID to be passed
 
@@ -165,6 +167,42 @@ def save_profile_hf_dataset(
 
 # --- Refinement Stage Functions ---
 
+# --- Helper task for Appendix HTML generation via LangChain ---
+def _generate_html_appendix_task_lc(
+    internal_structured_appendix_data: list, # List of AppendixDataItem like dicts
+    output_format_rules: str, # The 'output_format' string from prompts.py
+    chain_b_format_appendix_html_lc: any, # The pre-configured LangChain chain
+    append_log_func # For logging
+):
+    section_num = 32; had_error = False; html_content = ""
+    append_log_func(f"S{section_num}_HTML_Task: Starting Appendix HTML generation via LangChain.")
+
+    if not internal_structured_appendix_data: # Check if list is empty or None
+        append_log_func(f"S{section_num}_HTML_Task: No structured appendix data provided.")
+        html_content = f'<div class="section" id="section-{section_num}"><h2>{section_num}. Appendix</h2><p class="error">Could not generate Appendix HTML as structured data extraction failed or yielded no data.</p></div>'
+        had_error = True
+        return section_num, html_content, had_error
+    try:
+        # Ensure data is list of dicts for json.dumps
+        data_to_serialize = [item.model_dump() if hasattr(item, 'model_dump') else item for item in internal_structured_appendix_data]
+        structured_data_json_str = json.dumps(data_to_serialize, indent=2)
+
+        input_dict_chain_b = {
+            "structured_appendix_data_json_string": structured_data_json_str,
+            "output_format_rules": output_format_rules
+        }
+        # Assuming chain_b_format_appendix_html_lc is (prompt | llm | StrOutputParser)
+        html_output_from_chain = chain_b_format_appendix_html_lc.invoke(input_dict_chain_b)
+        
+        # The prompt for Chain B was told not to include the wrapper, so add it here.
+        html_content = f'<div class="section" id="section-{section_num}"><h2>{section_num}. Appendix</h2>\n{html_output_from_chain}\n</div>'
+        append_log_func(f"S{section_num}_HTML_Task: HTML for Appendix generated successfully via LangChain.")
+    except Exception as e:
+        append_log_func(f"S{section_num}_HTML_Task: ERROR during LangChain HTML Formatting: {e}"); traceback.print_exc()
+        html_content = f'<div class="section" id="section-{section_num}"><h2>{section_num}. Appendix</h2><p class="error">Error formatting Appendix HTML from structured data via LangChain: {e}</p></div>'
+        had_error = True
+    return section_num, html_content, had_error
+
 # --- NEW: Helper Function to Refine ONE Section ---
 def _refine_single_section(
     section_def, initial_html, documents_for_api, run_id, user_email, company_name,
@@ -251,22 +289,13 @@ def _refine_single_section(
 
 # --- REVISED Refinement Orchestration Function (Parallel) ---
 def run_refinement_stage(
-    # --- Context Passed from Initial Workflow ---
-    run_id: str,
-    user_email: str,
-    api_key: str,
-    company_name: str,
+    run_id: str, user_email: str, api_key: str, company_name: str,
     initial_results: dict,
+    internal_structured_appendix_data: list, # <<< ADD THIS ARGUMENT
     documents_for_api: list,
-    append_log_func, # Callback for logging
-    # --- Clients & Config Passed In ---
-    sg_client,
-    hf_api_client,
-    hf_token: str,
-    dataset_repo_id: str,
-    sender_email: str,
-    app_version: str,
-    max_workers: int # <<< ADDED max_workers
+    append_log_func,
+    sg_client, hf_api_client, hf_token: str, dataset_repo_id: str,
+    sender_email: str, app_version: str, max_workers: int
     ):
     """
     Orchestrates the refinement process section by section IN PARALLEL
@@ -447,67 +476,62 @@ def run_refinement_stage(
 # --- Main Background Workflow Function ---
 # This is the function that app.py will import and run in a thread
 
-def execute_full_profile_workflow(
-    # --- Original args from app.py ---
-    run_id: str,
-    user_email: str,
-    api_key: str,
-    temp_file_paths: list,
-    # --- Dependencies passed from app.py ---
-    sg_client,
-    hf_api_client,
-    hf_token: str,
-    dataset_repo_id: str,
-    sender_email: str,
-    app_version: str,
-    max_workers: int,
-    max_upload_bytes: int
-    ):
-    """
-    Performs the initial profile generation, emails result, THEN triggers refinement stage.
-    This is the main entry point called by app.py's thread.
-    """
-    start_run_time = time.time()
-    print(f"BG Processor: Run {run_id}: Started for {user_email}")
+# In src/background_processor.py
+# REPLACE the existing execute_full_profile_workflow function with this:
 
-    # --- Function-local Helper for Background Logging ---
+def execute_full_profile_workflow(
+    run_id: str, user_email: str, api_key: str, temp_file_paths: list,
+    sg_client, hf_api_client, hf_token: str, dataset_repo_id: str,
+    sender_email: str, app_version: str, max_workers: int, max_upload_bytes: int
+):
+    start_run_time = time.time()
     background_log_internal = []
     def get_run_elapsed():
-        elapsed = time.time() - start_run_time
-        minutes = int(elapsed // 60)
-        seconds = int(elapsed % 60)
+        elapsed = time.time() - start_run_time; minutes = int(elapsed // 60); seconds = int(elapsed % 60)
         return f"[{minutes}'{seconds:02d}\"]"
-
     def append_bg_log(message):
-        timestamped_message = f"{get_run_elapsed()} {message}"
-        background_log_internal.insert(0, timestamped_message)
-        print(f"BG Processor: Run {run_id}: {timestamped_message}")
-    # --- End of Local Helper ---
+        ts_msg = f"{get_run_elapsed()} {message}"; background_log_internal.insert(0, ts_msg)
+        print(f"BG Processor: Run {run_id}: {ts_msg}")
+    append_bg_log("Workflow started.")
 
-    # Initialize status flags and variables
-    initial_section_processing_error = False
-    initial_error_message_for_email = None
-    initial_profile_saved_to_dataset = False
-    initial_profile_repo_path = None
+    # Workflow variables
+    initial_results_for_sections = {}
+    internal_structured_appendix_data = []
+    documents_for_api_gemini_files = []
     company_name = "Unknown_Company"
-    initial_final_html = ""
-    documents_for_api = []
-    initial_results = {}
+    initial_draft_final_html = ""
+    initial_draft_profile_saved = False
+    initial_draft_profile_path = None
+    any_error_in_initial_draft_processing = False # Tracks errors in initial section drafts + appendix HTML
+    workflow_critical_failure_message = None
+
+    # --- Initialize LangChain LLMs and Chains for Appendix ---
+    append_bg_log("Initializing LangChain components for Appendix...")
+    chain_a_extract_appendix_data = None
+    appendix_data_parser_lc_instance = None # Store the parser from chain_a
+    chain_b_format_appendix_html_lc = None
+    gemini_llm_for_lc_appendix = None
+    try:
+        # This uses the get_gemini_llm from your lc_chains.py
+        gemini_llm_for_lc_appendix = get_gemini_llm(api_key, temperature=0.1)
+        chain_a_extract_appendix_data, appendix_data_parser_lc_instance = get_appendix_data_extraction_chain(gemini_llm_for_lc_appendix)
+        chain_b_format_appendix_html_lc = get_html_appendix_generation_chain(gemini_llm_for_lc_appendix)
+        append_bg_log("LangChain Appendix components initialized.")
+    except Exception as lc_init_e:
+        append_bg_log(f"CRITICAL ERROR initializing LangChain components: {lc_init_e}"); traceback.print_exc()
+        workflow_critical_failure_message = f"LangChain setup failed: {lc_init_e}"
 
     try:
-        # --- 1. Configure Google AI ---
-        append_bg_log("Configuring Google AI SDK...")
-        if not api_key: raise ValueError("ERROR: API Key was not provided.")
-        try:
-            genai.configure(api_key=api_key); append_bg_log("Google AI SDK Configured OK.")
-        except Exception as config_e: raise RuntimeError(f"CRITICAL ERROR configuring Google AI SDK: {config_e}") from config_e
+        if workflow_critical_failure_message: raise RuntimeError(workflow_critical_failure_message)
 
-        # --- 2. Process Uploaded Documents ---
-        append_bg_log("Processing uploaded documents...")
+        genai.configure(api_key=api_key)
+        append_bg_log("Google AI SDK Configured for direct calls.")
+
+        append_bg_log("Processing uploaded PDFs...")
+        # ... (Your full PDF processing logic from the file you provided)
         if not temp_file_paths: raise ValueError("No file paths provided.")
-        if not isinstance(temp_file_paths, list): temp_file_paths = [temp_file_paths]
         uploaded_data = {}; total_size = 0; valid_files_count = 0
-        for file_path in temp_file_paths:
+        for file_path in temp_file_paths: # Use a different loop var name
             if file_path is None: continue
             filename = os.path.basename(file_path)
             try:
@@ -517,160 +541,179 @@ def execute_full_profile_workflow(
                 if file_size == 0: continue
                 total_size += file_size
                 with open(file_path, 'rb') as f: uploaded_data[filename] = f.read()
-                valid_files_count += 1; append_bg_log(f"Read: {filename} ({file_size // 1024} KB)")
+                valid_files_count += 1
             except Exception as read_err: append_bg_log(f"Error reading '{filename}': {read_err}"); continue
         if not uploaded_data: raise ValueError("No valid PDF files processed.")
         if total_size > max_upload_bytes: raise ValueError(f"Upload failed: Size ({total_size / (1024*1024):.2f} MB) exceeds {max_upload_bytes / (1024*1024):.0f} MB.")
-        append_bg_log(f"Encoding {valid_files_count} files for API (base64)...")
-        documents_for_api = load_document_content(uploaded_data)
-        if not documents_for_api: raise ValueError("Failed to process documents (base64).")
+        
+        append_bg_log(f"Preparing {valid_files_count} documents for Gemini API...")
+        documents_for_api_gemini_files = load_document_content(uploaded_data) # This uses File API
+        if not documents_for_api_gemini_files: raise ValueError("Failed to prepare documents for API.")
         first_filename = next(iter(uploaded_data.keys())); company_name = os.path.splitext(first_filename)[0].replace('_', ' ')
-        append_bg_log(f"Company: {company_name}. Starting parallel generation...")
+        append_bg_log(f"Company: {company_name}. Documents prepared.")
 
+        # --- STAGE: Generate Internal Structured Appendix Data (LangChain) ---
+        append_bg_log("Extracting structured Appendix data via LangChain...")
+        try:
+             # To pass files to ChatGoogleGenerativeAI in LangChain,
+             # the HumanMessage content should be a list containing text and File objects.
+             from langchain_core.messages import HumanMessage, SystemMessage
+             from .lc_prompts import APPENDIX_EXTRACTION_SYSTEM_PROMPT_TEXT, APPENDIX_EXTRACTION_HUMAN_PROMPT_TEXT
 
-        # --- 3. Generate Sections in Parallel (Initial Pass) ---
-        append_bg_log(f"Creating Gemini model instance...")
-        insight_model = create_insight_model()
-        if not insight_model: raise RuntimeError("Failed to create insight model.")
-        append_bg_log(f"Model instance created. Submitting initial tasks with {max_workers} workers...")
-        total_sections = len(sections); completed_sections_count = 0
+             # Prepare the text part of the human message using the format instructions from the parser
+             human_prompt_text_for_extraction = APPENDIX_EXTRACTION_HUMAN_PROMPT_TEXT.format(
+                 format_instructions=appendix_data_parser_lc_instance.get_format_instructions()
+             )
+
+             # Construct the content for the HumanMessage: text followed by File objects
+             human_message_content_parts = [human_prompt_text_for_extraction]
+             human_message_content_parts.extend(documents_for_api_gemini_files)
+
+             # Create the list of messages for the LLM
+             messages_for_llm_extraction = [
+                 SystemMessage(content=APPENDIX_EXTRACTION_SYSTEM_PROMPT_TEXT),
+                 HumanMessage(content=human_message_content_parts)
+             ]
+
+             # Invoke the LLM component of chain_a directly with these crafted messages
+             # chain_a_extract_appendix_data is: prompt_template | llm | parser
+             # We are calling chain_a_extract_appendix_data.steps[1] which is the llm
+             llm_response_obj = chain_a_extract_appendix_data.steps[1].invoke(messages_for_llm_extraction)
+             
+             # Now parse using the parser component of the chain
+             parsed_appendix_data_obj = chain_a_extract_appendix_data.steps[2].parse(llm_response_obj.content)
+             
+             internal_structured_appendix_data = parsed_appendix_data_obj.data_points
+             append_bg_log(f"Internal Appendix Data: {len(internal_structured_appendix_data)} points extracted.")
+             save_log_entry_hf_dataset(user_email, {"event": "AppendixDataExtracted", "runId": run_id, "status": "Success", "points": len(internal_structured_appendix_data)}, hf_api_client, hf_token, dataset_repo_id)
+        except Exception as appendix_e:
+            append_bg_log(f"ERROR extracting Internal Appendix Data: {appendix_e}"); traceback.print_exc()
+            internal_structured_appendix_data = [] # Ensure it's a list for downstream safety
+            # Store error HTML directly for Appendix if its data extraction fails
+            initial_results_for_sections[32] = f'<div class="section" id="section-32"><h2>32. Appendix</h2><p class="error">Error extracting structured appendix data: {appendix_e}</p></div>'
+            any_error_in_initial_draft_processing = True
+            save_log_entry_hf_dataset(user_email, {"event": "AppendixDataExtracted", "runId": run_id, "status": "Failure", "error": str(appendix_e)}, hf_api_client, hf_token, dataset_repo_id)
+
+        # --- STAGE: Generate Initial Content for Sections (1-32) in Parallel ---
+        append_bg_log(f"Generating initial content for sections 1-32 ({max_workers} workers)...")
+        insight_model_for_std_sections = create_insight_model() # For sections 1-31
+        if not insight_model_for_std_sections: raise RuntimeError("Failed to create insight_model for sections 1-31.")
+
+        processed_tasks_count = 0
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_section = { executor.submit(generate_initial_section, section, documents_for_api, persona, analysis_specs, output_format, insight_model): section for section in sections }
-            append_bg_log(f"Initial tasks submitted. Waiting for completion...")
-            for future in as_completed(future_to_section):
-                section_def = future_to_section[future]; section_num = section_def["number"]; section_title = section_def["title"]
-                s_num_result, content_result = section_num, None
+            future_to_sec_def = {}
+            for sec_def_item in sections: # Ensure `sections` is defined/imported
+                if sec_def_item["number"] == 32: # Appendix HTML generation using LangChain Chain B
+                    future = executor.submit(_generate_html_appendix_task_lc,
+                                             internal_structured_appendix_data,
+                                             output_format, # Global HTML rules string from prompts.py
+                                             chain_b_format_appendix_html_lc, # The LangChain chain
+                                             append_bg_log)
+                else: # Sections 1-31 use the original `generate_initial_section`
+                    future = executor.submit(generate_initial_section,
+                                             sec_def_item, documents_for_api_gemini_files,
+                                             persona, analysis_specs, output_format, # From prompts.py
+                                             insight_model_for_std_sections,
+                                             [] # Pass empty list for appendix data for S1-31 for now
+                                            )
+                future_to_sec_def[future] = sec_def_item
+            
+            append_bg_log(f"All initial section tasks submitted ({len(future_to_sec_def)}). Waiting...")
+            for future in as_completed(future_to_sec_def):
+                sec_def_done = future_to_sec_def[future]
+                s_num, s_title = sec_def_done["number"], sec_def_done["title"]
                 try:
-                    s_num_result, content_result = future.result()
-                    if not content_result or '<p class="error">' in str(content_result):
-                        append_bg_log(f"PARTIAL FAIL: Section {s_num_result} ('{section_title}') initial generation reported error.")
-                        initial_section_processing_error = True
-                        if not content_result: content_result = f'<div class="section" id="section-{s_num_result}"><h2>{s_num_result}. {section_title}</h2><p class="error">ERROR: Generation function returned empty content.</p></div>'
-                    else: append_bg_log(f"SUCCESS: Section {s_num_result} ('{section_title}') initial generation.")
-                    initial_results[section_num] = content_result
-                except Exception as e:
-                    append_bg_log(f"FAIL: Section {section_num} ('{section_title}') initial generation hit exception - {type(e).__name__}: {e}")
-                    error_content_html = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">ERROR: Generation process failed unexpectedly: {e}</p></div>'
-                    initial_results[section_num] = error_content_html; content_result = error_content_html; initial_section_processing_error = True
-                try: # Save Initial Section
-                    if content_result:
-                         save_section_hf_dataset(section_num=s_num_result, section_content=str(content_result), content_type="html", run_id=run_id, company_name=company_name, user_email=user_email, api=hf_api_client, HF_TOKEN=hf_token, DATASET_REPO_ID=dataset_repo_id)
-                    else: append_bg_log(f"Warning: Skipping dataset save for empty initial section {s_num_result}")
-                except Exception as section_save_e: append_bg_log(f"Non-critical error during initial save attempt for section {s_num_result}: {section_save_e}")
-                completed_sections_count += 1; progress_percent = int((completed_sections_count / total_sections) * 100); append_bg_log(f"Initial Progress: {completed_sections_count}/{total_sections} ({progress_percent}%) sections processed.")
-        append_bg_log("All initial sections processed. Aggregating initial profile...")
+                    result_from_future = future.result()
+                    html_content_from_task = ""; task_had_error_flag = False
 
-        # --- 4. Aggregate and Save Initial Profile ---
-        ordered_initial_contents = []
-        for section_def in sorted(sections, key=lambda x: x["number"]):
-            content = initial_results.get(section_def["number"], f'<div class="section" id="section-{section_def["number"]}"><h2>{section_def["number"]}. {section_def["title"]}</h2><p class="error">ERROR: Content missing during initial aggregation.</p></div>')
-            ordered_initial_contents.append(str(content))
-        initial_final_html = generate_full_html_profile(company_name, sections, ordered_initial_contents, app_version)
-        if initial_final_html and isinstance(initial_final_html, str):
-            append_bg_log("Initial HTML generated. Saving to dataset...")
-            saved_repo_path = save_profile_hf_dataset(profile_content=initial_final_html, content_type="html", run_id=run_id, company_name=company_name, user_email=user_email, api=hf_api_client, HF_TOKEN=hf_token, DATASET_REPO_ID=dataset_repo_id)
-            if saved_repo_path: initial_profile_saved_to_dataset = True; initial_profile_repo_path = saved_repo_path; append_bg_log(f"Initial profile saved successfully to dataset: {saved_repo_path}")
-            else: append_bg_log("Warning: Failed to save initial profile to dataset."); initial_profile_saved_to_dataset = False; initial_section_processing_error = True
-        else: append_bg_log("Error: Initial HTML generation failed or produced empty content."); raise ValueError("Initial HTML generation failed.")
+                    if s_num == 32: 
+                        _, html_content_from_task, task_had_error_flag = result_from_future
+                    else: 
+                        _, html_content_from_task = result_from_future
+                        if not html_content_from_task or '<p class="error">' in str(html_content_from_task):
+                            task_had_error_flag = True
+                            if not html_content_from_task: html_content_from_task = f'<div class="section" id="section-{s_num}"><h2>{s_num}. {s_title}</h2><p class="error">Empty content returned.</p></div>'
+                    
+                    initial_results_for_sections[s_num] = html_content_from_task
+                    if task_had_error_flag: any_error_in_initial_draft_processing = True
+                    append_bg_log(f"S{s_num} ('{s_title}') initial content done {'with errors' if task_had_error_flag else 'OK'}.")
+                except Exception as e_future:
+                    append_bg_log(f"ERROR processing S{s_num} ('{s_title}') future: {e_future}"); traceback.print_exc()
+                    initial_results_for_sections[s_num] = f'<div class="section" id="section-{s_num}"><h2>{s_num}. {s_title}</h2><p class="error">Task failed: {e_future}</p></div>'
+                    any_error_in_initial_draft_processing = True
+                
+                if initial_results_for_sections.get(s_num):
+                    save_section_hf_dataset(s_num, str(initial_results_for_sections[s_num]), "html_initial", run_id, company_name, user_email, hf_api_client, hf_token, dataset_repo_id)
+                processed_tasks_count += 1
+                append_bg_log(f"Progress: {processed_tasks_count}/{len(sections)} initial sections processed.")
+        
+        append_bg_log("Aggregating initial draft profile...")
+        ordered_initial_draft_contents = [initial_results_for_sections.get(s["number"], f"Error S{s['number']} HTML missing") for s in sorted(sections, key=lambda x:x["number"])]
+        initial_draft_final_html = generate_full_html_profile(company_name, sections, ordered_initial_draft_contents, app_version)
 
+        if initial_draft_final_html:
+            saved_draft_path = save_profile_hf_dataset(initial_draft_final_html, "html_initial_draft", run_id, company_name, user_email, hf_api_client, hf_token, dataset_repo_id, "_initial_draft") # Added suffix for clarity
+            if saved_draft_path: initial_draft_profile_saved = True; initial_draft_profile_path = saved_draft_path
+            else: any_error_in_initial_draft_processing = True; append_bg_log("Error saving initial draft profile.")
+        else: any_error_in_initial_draft_processing = True; append_bg_log("Error: Initial draft final HTML is empty.")
 
-    except Exception as generation_e:
-        print(f"BG Processor: Run {run_id}: CRITICAL ERROR during initial generation pipeline: {generation_e}"); traceback.print_exc()
-        initial_section_processing_error = True; initial_error_message_for_email = f"Profile generation failed: {type(generation_e).__name__} - {str(generation_e)}"
+    except Exception as e_outer_workflow:
+        append_bg_log(f"CRITICAL WORKFLOW ERROR (Initial Gen): {e_outer_workflow}"); traceback.print_exc()
+        workflow_critical_failure_message = f"Critical error: {type(e_outer_workflow).__name__} ({str(e_outer_workflow)[:100]})"
+        save_log_entry_hf_dataset(user_email, {"event": "RunFailed", "status": "Critical", "error": workflow_critical_failure_message, "stage": "InitialGeneration"}, hf_api_client, hf_token, dataset_repo_id)
+    
+    # --- Send Initial Draft Email (if no critical failure) ---
+    if not workflow_critical_failure_message:
+        append_bg_log("Preparing initial draft email notification...")
+        subject_init = f"ProfileDash: Initial Draft for {company_name} Ready"
+        body_init = f"<p>Your initial ProfileDash draft for <strong>{company_name}</strong> is ready. A final, refined version will follow after further processing.</p>"
+        attach_init = None
+        if initial_draft_profile_saved and initial_draft_final_html:
+            try:
+                encoded_init = base64.b64encode(initial_draft_final_html.encode('utf-8')).decode('ascii')
+                fname_init = os.path.basename(initial_draft_profile_path) if initial_draft_profile_path else f"{company_name}_draft.html"
+                attach_init = Attachment(FileContent(encoded_init), FileName(fname_init), FileType('text/html'), Disposition('attachment'))
+                body_init += "<p>The initial draft is attached.</p>"
+            except Exception as e_att_init: append_bg_log(f"Error attaching initial draft: {e_att_init}")
+        if any_error_in_initial_draft_processing: body_init += "<p><i>Note: This draft may contain errors or incomplete sections.</i></p>"
+        body_init += f"<p>(Run ID: {run_id})</p><hr><p style='font-size:small;'>ProfileDash {app_version}</p>"
+        if sg_client:
+            try:
+                msg_init = Mail(Email(sender_email, "ProfileDash (Initial Draft)"), To(user_email), subject_init, Content("text/html", body_init))
+                if attach_init: msg_init.attachment = attach_init
+                response_init_email = sg_client.client.mail.send.post(request_body=msg_init.get()) # Renamed var
+                append_bg_log(f"Initial draft email sent (status: {response_init_email.status_code}).")
+                save_log_entry_hf_dataset(user_email, {"event": "InitialDraftEmailSent", "runId": run_id, "status": response_init_email.status_code}, hf_api_client, hf_token, dataset_repo_id)
+            except Exception as e_mail_init: append_bg_log(f"ERROR sending initial draft email: {e_mail_init}")
+        else: append_bg_log("SendGrid not configured, initial draft email skipped.")
+ 
+    # --- Call Refinement Stage (if initial generation didn't critically fail) ---
+    if not workflow_critical_failure_message:
+        append_bg_log("Initial processing done. Starting separate refinement stage...")
         try:
-            log_event = {"event": "RunFailed", "runId": run_id, "status": "Exception", "errorStage": "InitialGenerationPipeline", "errorType": type(generation_e).__name__, "errorMessage": str(generation_e)}
-            save_log_entry_hf_dataset(user_email=user_email, event_data=log_event, api=hf_api_client, HF_TOKEN=hf_token, DATASET_REPO_ID=dataset_repo_id)
-        except Exception as log_fail_e: print(f"Error logging RunFailed after main exception: {log_fail_e}")
-
-
-    # --- 5. Send INITIAL Email Notification ---
-    append_bg_log("Preparing INITIAL email notification...")
-    # (Initial email composition and sending logic - same as previous version)
-    email_subject_initial = ""; email_html_content_initial = ""; attachment_object_initial = None
-    initial_generation_succeeded_fully = not initial_error_message_for_email and initial_profile_saved_to_dataset
-    initial_generation_completed_with_errors = (initial_section_processing_error or not initial_profile_saved_to_dataset) and not initial_error_message_for_email
-    initial_generation_failed_critically = initial_error_message_for_email is not None
-
-    if initial_generation_succeeded_fully or initial_generation_completed_with_errors:
-        status_string = "completed successfully" if initial_generation_succeeded_fully else "completed with some errors"
-        email_subject_initial = f"ProfileDash: Initial Profile for {company_name} is Ready"
-        if initial_generation_completed_with_errors: email_subject_initial = f"ProfileDash: Initial Profile for {company_name} Completed (with errors)"
-        if initial_final_html and initial_profile_repo_path:
-            try: # Try attach
-                encoded_content = base64.b64encode(initial_final_html.encode('utf-8')).decode('ascii')
-                attachment_filename = os.path.basename(initial_profile_repo_path);
-                if not attachment_filename.lower().endswith('.html'): attachment_filename += ".html"
-                attachment_object_initial = Attachment(FileContent(encoded_content), FileName(attachment_filename), FileType('text/html'), Disposition('attachment'))
-                email_html_content_initial = f"""<p>Your <strong>initial</strong> ProfileDash profile generation for <strong>{company_name}</strong> {status_string}.</p><p>The initially generated profile is attached.</p>{'<p><i>Note: Some sections might contain errors.</i></p>' if initial_generation_completed_with_errors else ''}<p>A refined version is being generated and will be sent separately (approx. 30-60 mins).</p><p>(Run ID: {run_id})</p><hr><p style='font-size:small; color:grey;'>ProfileDash {app_version}</p>""" # Adjusted time estimate
-            except Exception as attach_prep_e:
-                 append_bg_log(f"ERROR preparing initial Base64 attachment: {attach_prep_e}.")
-                 attachment_object_initial = None
-                 email_html_content_initial = f"""<p>Your <strong>initial</strong> ProfileDash profile generation for <strong>{company_name}</strong> {status_string}, but attachment failed.</p><p>A refined version is being generated and will be sent separately (approx. 30-60 mins).</p><p>(Run ID: {run_id})</p><hr><p style='font-size:small; color:grey;'>ProfileDash {app_version}</p>""" # Adjusted time estimate
-        else:
-            email_html_content_initial = f"""<p>Your <strong>initial</strong> ProfileDash profile generation for <strong>{company_name}</strong> {status_string}, but the final profile could not be generated/saved for attachment.</p><p>A refined version is being generated and will be sent separately (approx. 30-60 mins).</p><p>(Run ID: {run_id})</p><hr><p style='font-size:small; color:grey;'>ProfileDash {app_version}</p>""" # Adjusted time estimate
-        log_event_status = "Success" if initial_generation_succeeded_fully else "CompletedWithErrors"
-        try: # Log completion
-            log_event = {"event": "RunCompleted", "runId": run_id, "status": log_event_status, "stage": "Initial", "finalProfileSaved": initial_profile_saved_to_dataset, "sectionProcessingErrorEncountered": initial_section_processing_error}
-            save_log_entry_hf_dataset(user_email=user_email, event_data=log_event, api=hf_api_client, HF_TOKEN=hf_token, DATASET_REPO_ID=dataset_repo_id)
-        except Exception as log_complete_e: print(f"Error logging RunCompleted ({log_event_status}) initial: {log_complete_e}")
-    else: # Failed critically
-        email_subject_initial = f"ProfileDash: Profile Generation Failed for {company_name}"
-        error_details = initial_error_message_for_email if initial_error_message_for_email else 'An unspecified critical error occurred during initial generation.'
-        email_html_content_initial = f"""<p>Unfortunately, the initial ProfileDash profile generation for <strong>{company_name}</strong> failed critically.</p><p>Error details: {error_details}</p><p>No initial profile could be generated. Refinement stage will not run.</p><p>(Run ID: {run_id})</p><hr><p style='font-size:small; color:grey;'>ProfileDash {app_version}</p>"""
-
-    # Send Initial Email
-    if sg_client:
-        try:
-            message = Mail(from_email=Email(sender_email, "ProfileDash Notification (Initial)"), to_emails=To(user_email), subject=email_subject_initial, html_content=Content("text/html", email_html_content_initial))
-            if attachment_object_initial: message.attachment = attachment_object_initial; append_bg_log("Initial Attachment added to email message.")
-            response = sg_client.client.mail.send.post(request_body=message.get())
-            email_log_status_initial = "Success" if 200 <= response.status_code < 300 else "Failure"
-            append_bg_log(f"Initial notification email send status: {email_log_status_initial}")
-            try: # Log email send attempt
-                log_event = {"event": "InitialNotificationEmailSent", "runId": run_id, "status": email_log_status_initial}
-                if email_log_status_initial == "Failure": log_event["sendgridResponseStatus"] = response.status_code; log_event["sendgridResponseBody"] = str(response.body)[:1000]
-                save_log_entry_hf_dataset(user_email=user_email, event_data=log_event, api=hf_api_client, HF_TOKEN=hf_token, DATASET_REPO_ID=dataset_repo_id)
-            except Exception as log_email_e: print(f"Error logging InitialNotificationEmailSent status: {log_email_e}")
-        except Exception as email_ex:
-             append_bg_log(f"Exception sending initial notification email: {email_ex}"); traceback.print_exc()
-             try: # Log email exception
-                 log_event = {"event": "InitialNotificationEmailSent", "runId": run_id, "status": "Exception", "error": str(email_ex)}
-                 save_log_entry_hf_dataset(user_email=user_email, event_data=log_event, api=hf_api_client, HF_TOKEN=hf_token, DATASET_REPO_ID=dataset_repo_id)
-             except Exception as log_email_e: print(f"Error logging Initial EmailSent exception: {log_email_e}")
-    else: append_bg_log("SendGrid client not available. Cannot send initial email notification.")
-
-
-    # --- *** CALL REFINEMENT STAGE *** ---
-    if not initial_generation_failed_critically:
-        append_bg_log("Initial processing complete. Starting refinement stage...")
-        initial_results_snapshot = initial_results.copy() # Pass snapshot
-        try:
-            # Call the refinement orchestrator function (defined above in this file)
             run_refinement_stage(
-                run_id=run_id,
-                user_email=user_email,
-                api_key=api_key,
-                company_name=company_name,
-                initial_results=initial_results_snapshot,
-                documents_for_api=documents_for_api,
-                append_log_func=append_bg_log, # Pass the logger
-                # Pass clients and config needed by refinement stage
-                sg_client=sg_client,
-                hf_api_client=hf_api_client,
-                hf_token=hf_token,
-                dataset_repo_id=dataset_repo_id,
-                sender_email=sender_email,
-                app_version=app_version,
-                max_workers=max_workers # <<< Pass max_workers for parallel refinement
+                run_id, user_email, api_key, company_name,
+                initial_results=initial_results_for_sections.copy(),
+                internal_structured_appendix_data=internal_structured_appendix_data, # Pass this
+                documents_for_api=documents_for_api_gemini_files,
+                append_log_func=append_bg_log,
+                sg_client=sg_client, hf_api_client=hf_api_client, hf_token=hf_token,
+                dataset_repo_id=dataset_repo_id, sender_email=sender_email, app_version=app_version,
+                max_workers=max_workers
             )
-            append_bg_log("Refinement stage completed (or attempted).")
-        except Exception as refinement_e:
-            error_msg = f"CRITICAL ERROR initiating or during refinement stage call: {type(refinement_e).__name__} - {str(refinement_e)}"
-            append_bg_log(error_msg); traceback.print_exc()
-            log_event = {"event": "RefinementStageFailed", "runId": run_id, "status": "CriticalException", "error": error_msg, "stage": "OrchestratorCall"}
-            save_log_entry_hf_dataset(user_email=user_email, event_data=log_event, api=hf_api_client, HF_TOKEN=hf_token, DATASET_REPO_ID=dataset_repo_id)
+        except Exception as refine_call_e:
+            append_bg_log(f"ERROR calling/during run_refinement_stage: {refine_call_e}"); traceback.print_exc()
+            save_log_entry_hf_dataset(user_email, {"event": "RefinementStageCallFailed", "runId": run_id, "error": str(refine_call_e)}, hf_api_client, hf_token, dataset_repo_id)
     else:
-         append_bg_log("Skipping refinement stage due to critical failure during initial generation.")
+        append_bg_log("Skipping refinement stage due to critical failure in initial processing.")
+        if sg_client: # Send failure email if critically failed and no initial email was sent
+             try:
+                 fail_subject = f"ProfileDash: Profile Generation FAILED for {company_name}"
+                 fail_body = f"<p>Profile generation for <strong>{company_name}</strong> failed critically.</p><p>Error: {workflow_critical_failure_message}</p><p>(Run ID: {run_id})</p><hr><p style='font-size:small;'>ProfileDash {app_version}</p>"
+                 fail_msg = Mail(Email(sender_email,"ProfileDash"), To(user_email), fail_subject, Content("text/html", fail_body))
+                 sg_client.client.mail.send.post(request_body=fail_msg.get())
+                 append_bg_log("Critical failure notification email sent.")
+             except Exception as final_fail_email_e: append_bg_log(f"Error sending critical failure email: {final_fail_email_e}")
 
-    # --- End of background task ---
-    append_bg_log(f"Background task finished.")
+    append_bg_log("Background task fully finished.")
+

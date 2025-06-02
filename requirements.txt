@@ -1,7 +1,25 @@
+# Core Application Dependencies
 gradio>=4.0
-google-generativeai>=0.5.0
+google-generativeai>=0.5.0 # For direct Gemini SDK use & LangChain's Google GenAI
 python-dotenv>=1.0.0
 sendgrid>=6.9.0
 cachetools>=5.0.0
 requests>=2.25.0
 huggingface_hub>=0.20
+
+# Pydantic (Often a dependency for LangChain, especially for output parsers and models)
+pydantic>=2.0,<3.0
+
+# LangChain Packages
+langchain-core>=0.1.40 # Core abstractions
+langchain>=0.1.15      # Main LangChain package with chains, agents, etc.
+langchain-google-genai>=0.1.0 # Specific integration for Google Generative AI (Gemini)
+langchain-community>=0.0.30 # Often needed for various integrations, loaders, etc. Good to have.
+
+llama-index-core>=0.10.20   # Core LlamaIndex (v0.10.x is the current major line)
+llama-index-readers-file>=0.1.10 # For SimpleDirectoryReader and PDF parsing
+
+pypdfium2>=0.26.0
+
+numpy 
+httpx 

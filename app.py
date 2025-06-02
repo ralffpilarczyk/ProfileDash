@@ -242,7 +242,7 @@ def verify_email_and_check_key(email, auth_state):
          print(f"Access denied for email: {email}")
          try: # Log denial
             log_event = {"event": "AuthAttemptDenied", "reason": "Email/Domain not permitted", "appVersion": APP_VERSION}
-            save_log_entry_hf_dataset(user_email=email, event_data=log_event)
+            save_log_entry_hf_dataset(user_email=email, event_data=log_event, api=api, HF_TOKEN=HF_TOKEN, DATASET_REPO_ID=DATASET_REPO_ID)
          except Exception as log_denial_e: print(f"Error logging AuthAttemptDenied: {log_denial_e}")
          # Return: Denial status, original state, keep email visible, keep main app hidden
          # Return generic denial message to user
