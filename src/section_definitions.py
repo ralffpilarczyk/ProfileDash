@@ -656,126 +656,35 @@ sections = [
             "More recent data points (e.g. from subsequent interim financials) are more important than older data points (e.g. from the preceding annual report). \\n"
             "Always include precise footnotes with exact sources, document references, page numbers, and sections for each data point.",
     },
+
     {
         "number": 32,
         "title": "Appendix",
-        "specs": "Extract and organize all financial and operational data in a systematic manner following standard financial reporting sequence.\\n"
-                "\\n"
-                "I. Financial Statements (for last 3 annual periods and 5 most recent interim periods):\\n"
-                "   a. Income Statement:\\n"
-                "      - Revenue and revenue components\\n"
-                "      - Cost of goods sold/services\\n"
-                "      - Gross profit and margin\\n"
-                "      - Operating expenses (detailed breakdown)\\n"
-                "      - Operating income and margin\\n"
-                "      - Other income/expenses\\n"
-                "      - Income taxes\\n"
-                "      - Net income and margin\\n"
-                "      - EPS (basic and diluted)\\n"
-                "\\n"
-                "   b. Balance Sheet:\\n"
-                "      - Current assets (detailed breakdown)\\n"
-                "      - Non-current assets (detailed breakdown)\\n"
-                "      - Current liabilities (detailed breakdown)\\n"
-                "      - Non-current liabilities (detailed breakdown)\\n"
-                "      - Shareholders' equity components\\n"
-                "      - Working capital components\\n"
-                "\\n"
-                "   c. Cash Flow Statement:\\n"
-                "      - Operating cash flows (detailed)\\n"
-                "      - Investing cash flows (detailed)\\n"
-                "      - Financing cash flows (detailed)\\n"
-                "      - Free cash flow components\\n"
-                "\\n"
-                "   d. Statement of Changes in Equity:\\n"
-                "      - All equity movements\\n"
-                "      - Share capital changes\\n"
-                "      - Dividend history\\n"
-                "\\n"
-                "II. Notes and Additional Financial Data:\\n"
-                "   a. Segment Information:\\n"
-                "      - Revenue by segment\\n"
-                "      - Operating income by segment\\n"
-                "      - Assets by segment\\n"
-                "      - Geographic breakdown\\n"
-                "\\n"
-                "   b. Revenue Details:\\n"
-                "      - Revenue by product/service\\n"
-                "      - Revenue by customer type\\n"
-                "      - Revenue recognition policies\\n"
-                "\\n"
-                "   c. Cost Structure:\\n"
-                "      - Fixed vs variable costs\\n"
-                "      - Cost components\\n"
-                "      - Cost trends\\n"
-                "\\n"
-                "   d. Working Capital:\\n"
-                "      - Inventory details\\n"
-                "      - Receivables aging\\n"
-                "      - Payables terms\\n"
-                "\\n"
-                "   e. Debt and Financing:\\n"
-                "      - Debt schedule\\n"
-                "      - Interest rates\\n"
-                "      - Maturity profile\\n"
-                "      - Covenants\\n"
-                "\\n"
-                "   f. Off-Balance Sheet Items:\\n"
-                "      - Operating leases\\n"
-                "      - Contingent liabilities\\n"
-                "      - Guarantees\\n"
-                "\\n"
-                "III. Operational Data:\\n"
-                "   a. Operating Metrics:\\n"
-                "      - Production volumes\\n"
-                "      - Capacity utilization\\n"
-                "      - Efficiency metrics and unit economics\\n"
-                "\\n"
-                "   b. Non-GAAP Measures:\\n"
-                "      - Adjusted EBITDA\\n"
-                "      - Adjusted earnings\\n"
-                "      - Other company-specific metrics\\n"
-                "      - Reconciliations to GAAP\\n"
-                "\\n"
-                "   c. Key Performance Indicators:\\n"
-                "      - Customer metrics\\n"
-                "      - Operational efficiency\\n"
-                "      - Quality metrics\\n"
-                "      - Market share data\\n"
-                "\\n"
-                "Presentation Requirements:\\n"
-                "I. Format:\\n"
-                "   - Present all numerical data in table format where possible\\n"
-                "   - Include explanatory text below each table\\n"
-                "   - Maintain consistent time periods across tables\\n"
-                "   - Clearly label all metrics and time periods\\n"
-                "\\n"
-                "II. Time Periods:\\n"
-                "   - Last 3 annual periods (specify exact dates)\\n"
-                "   - 5 most recent interim periods (specify exact dates)\\n"
-                "   - Year-over-year comparisons\\n"
-                "   - Sequential period comparisons\\n"
-                "\\n"
-                "III. Data Quality:\\n"
-                "   - Flag any restatements\\n"
-                "   - Note accounting policy changes\\n"
-                "   - Highlight one-time items\\n"
-                "   - Identify pro-forma adjustments\\n"
-                "\\n"
-                "IV. Source Documentation:\\n"
-                "   - Include detailed footnotes for every data point\\n"
-                "   - Specify document name, page number, and section\\n"
-                "   - Note any calculations or adjustments made\\n"
-                "   - Reference specific SEC filings or interim reports\\n"
-                "\\n"
-                "V. Validation:\\n"
-                "   - Cross-reference numbers across statements\\n"
-                "   - Verify totals and subtotals\\n"
-                "   - Check for consistency across periods\\n"
-                "   - Confirm segment data reconciles to consolidated\\n"
-                "\\n"
-                "All data points must reference specific time periods and include comprehensive source citations.\\n"
-                "Present data in a logical sequence following standard financial reporting practices.\\n"
-                "Include detailed footnotes with exact sources, document references, page numbers, and sections for each data point."
+        "specs": """
+You will be provided with a large block of text containing all tables extracted from multiple source documents, formatted in Markdown.
+Your task is to act as an expert data organizer and format this information into a single, clean, comprehensive, and logically structured HTML appendix.
+
+**CRITICAL INSTRUCTIONS:**
+
+1.  **DO NOT OMIT ANY DATA.** Your primary goal is to present **ALL** the numerical data provided in the input markdown. Do not summarize, aggregate, or drop any figures. If you see a number, it must appear in your output.
+
+2.  **Organize Logically:** Structure the appendix in a sequence similar to what would be found in a professional financial prospectus. The ideal order is:
+    a. **Operational KPIs:** Key Performance Indicators, non-financial metrics (e.g., subscribers, units, market share).
+    b. **Consolidated Financials:** The main financial statements (Income Statement, Balance Sheet, Cash Flow).
+    c. **Supporting Financials:** Detailed breakdowns that support the main statements (e.g., debt schedules, revenue recognition details).
+    d. **Segment Reporting:** Financials broken down by business segment or geography.
+    e. **Shareholder & Governance Data:** Top shareholders, board information, etc.
+    f. **All other miscellaneous data tables.**
+
+3.  **Combine Time Periods Intelligently:** Where possible, present annual and quarterly data for the same metric in a single table to show progression and allow for easy comparison. For example, a row for "Revenue" might have columns for FY2022, FY2023, Q1 2023, and Q1 2024.
+
+4.  **Prioritize Clarity over Combination:** If combining time periods creates a confusing or inaccurate table (e.g., the metrics are not truly like-for-like, or the headers become too complex), it is **better to create separate, clear tables**. Never drop data for the sake of combining. When in doubt, show tables separately.
+
+5.  **Use Standard HTML:** Adhere strictly to the provided HTML formatting rules (e.g., `<table class="data-table">`, `<thead>`, `<tbody>`, etc.). Use `<h3>` and `<h4>` to create a clear hierarchy based on the organizational structure above.
+
+6.  **Use Source Information:** The input markdown will contain page numbers and table titles from the original documents. Use these to inform your headings and to help you group related tables.
+
+Your output must be a single, well-formed block of HTML representing the entire appendix content, starting with `<div class="section" id="section-32">` and ending with `</div>`.
+        """
     }
 ]
