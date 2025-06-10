@@ -3,11 +3,10 @@ import os
 import json
 from typing import List, Dict
 
-# LlamaIndex v0.10+ syntax
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
+from llama_index.core import VectorStoreIndex, Settings
 from llama_index.core.node_parser import SemanticSplitterNodeParser
-from llama_index.llms.google import GoogleGemini
-from llama_index.embeddings.google import GoogleGeminiEmbedding
+from llama_index.llms.gemini import Gemini  # CORRECTED
+from llama_index.embeddings.gemini import GeminiEmbedding # CORRECTED
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document
 
@@ -41,8 +40,8 @@ def create_semantic_index(
     """
     print("LlamaIndex: Initializing models and settings...")
     # Initialize LlamaIndex components with the provided API key
-    Settings.llm = GoogleGemini(model_name="models/gemini-1.5-flash-latest", api_key=api_key)
-    Settings.embed_model = GoogleGeminiEmbedding(model_name="models/embedding-001", api_key=api_key)
+    Settings.llm = Gemini(model_name="models/gemini-1.5-flash-latest", api_key=api_key)
+    Settings.embed_model = GeminiEmbedding(model_name="models/embedding-001", api_key=api_key)
     
     print("LlamaIndex: Loading documents with custom in-memory reader...")
     # Load documents from the in-memory dictionary of markdown content

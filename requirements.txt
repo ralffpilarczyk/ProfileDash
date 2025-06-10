@@ -1,11 +1,11 @@
-# --- START OF MINIMAL requirements.txt ---
-gradio
-huggingface_hub
-sendgrid
-python-dotenv
-google-generativeai
-PyPDF2
-llama-index
-llama-index-llms-gemini
-llama-index-embeddings-gemini
-# --- END OF MINIMAL requirements.txt ---
+# --- requirements.txt ---
+gradio==4.31.5
+huggingface_hub==0.23.0
+sendgrid==6.11.0
+python-dotenv==1.0.1
+google-generativeai==0.5.4
+PyPDF2==3.0.1
+# LlamaIndex packages pinned to a compatible set
+llama-index==0.10.46
+llama-index-llms-gemini==0.1.7
+llama-index-embeddings-gemini==0.1.7

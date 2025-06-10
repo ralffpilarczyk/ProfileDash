@@ -4,7 +4,7 @@ import traceback
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from huggingface_hub import HfApi, upload_file
+from huggingface_hub import HfApi, upload_file, hf_hub_download
 import io
 import base64
 from sendgrid.helpers.mail import (
@@ -203,18 +203,25 @@ def execute_full_profile_workflow(
         append_bg_log("Collating extracted content from Hugging Face...")
         markdown_content_map = {}
         json_content_map = {}
+
         for res in successful_extractions:
             try:
-                with hf_api_client.hf_hub_download(repo_id=dataset_repo_id, filename=res['text_file'], repo_type="dataset", token=hf_token) as f:
-                    markdown_content_map[res['text_file']] = open(f, 'r', encoding='utf-8').read()
-                with hf_api_client.hf_hub_download(repo_id=dataset_repo_id, filename=res['tables_file'], repo_type="dataset", token=hf_token) as f:
-                    markdown_content_map[res['tables_file']] = open(f, 'r', encoding='utf-8').read()
-                with hf_api_client.hf_hub_download(repo_id=dataset_repo_id, filename=res['json_file'], repo_type="dataset", token=hf_token) as f:
-                    json_content_map[res['json_file']] = json.load(open(f, 'r', encoding='utf-8'))
+                text_path = hf_hub_download(repo_id=dataset_repo_id, filename=res['text_file'], repo_type="dataset", token=hf_token)
+                with open(text_path, 'r', encoding='utf-8') as f:
+                    markdown_content_map[res['text_file']] = f.read()
+
+                tables_path = hf_hub_download(repo_id=dataset_repo_id, filename=res['tables_file'], repo_type="dataset", token=hf_token)
+                with open(tables_path, 'r', encoding='utf-8') as f:
+                    markdown_content_map[res['tables_file']] = f.read()
+
+                json_path = hf_hub_download(repo_id=dataset_repo_id, filename=res['json_file'], repo_type="dataset", token=hf_token)
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    json_content_map[res['json_file']] = json.load(f)
+                    
             except Exception as download_err:
-                 append_bg_log(f"ERROR downloading artifact for {res['filename']}: {download_err}. Skipping this document.")
-                 continue
-        
+                append_bg_log(f"ERROR downloading artifact for {res['filename']}: {download_err}. Skipping this document.")
+                continue
+                   
         if not markdown_content_map:
             raise RuntimeError("Could not retrieve any markdown artifacts from Hugging Face. Cannot proceed.")
 

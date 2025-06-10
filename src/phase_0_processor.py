@@ -12,7 +12,7 @@ import google.generativeai as genai
 import PyPDF2
 from huggingface_hub import HfApi, upload_file
 
-from .tools.table_postprocessor import TablePostProcessor
+from .table_postprocessor import TablePostProcessor
 
 def _get_pdf_page_count(file_bytes: bytes) -> int:
     """Gets the total number of pages from PDF bytes."""
