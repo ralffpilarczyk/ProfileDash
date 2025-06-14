@@ -12,6 +12,7 @@ import tempfile
 import google.generativeai as genai
 import PyPDF2
 from huggingface_hub import HfApi, upload_file
+from .hf_retry import upload_file_with_retry
 from .config import GEMINI_MODEL_NAME
 
 from .table_postprocessor import TablePostProcessor
@@ -27,19 +28,19 @@ def _get_pdf_page_count(file_bytes: bytes) -> int:
         return 250 # Fallback to a reasonable high number
 
 def _save_artifact_to_hf(content: str, repo_path: str, run_id: str, hf_api_client: HfApi, hf_token: str, dataset_repo_id: str):
-    """Helper to upload a string content to a specified path in the HF Dataset."""
+    """Helper to upload a string content to HF with retry on rate-limit."""
     if not all([hf_api_client, hf_token, dataset_repo_id]):
         print(f"HF save skipped for {repo_path} due to missing HF credentials.")
         return None
     try:
-        content_bytes = io.BytesIO(content.encode('utf-8'))
-        upload_file(
+        content_bytes = io.BytesIO(content.encode("utf-8"))
+        upload_file_with_retry(
             path_or_fileobj=content_bytes,
             path_in_repo=repo_path,
             repo_id=dataset_repo_id,
             repo_type="dataset",
             token=hf_token,
-            commit_message=f"Add Phase 0 artifact for run {run_id[:8]}"
+            commit_message=f"Add Phase 0 artifact for run {run_id[:8]}",
         )
         print(f"Phase 0: Successfully saved artifact to {repo_path}")
         return repo_path

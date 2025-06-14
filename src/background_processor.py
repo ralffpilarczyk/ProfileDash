@@ -5,12 +5,14 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from huggingface_hub import HfApi, upload_file, hf_hub_download
+from huggingface_hub.utils import HfHubHTTPError
 import io
 import base64
 import google.generativeai as genai
 from typing import List, Dict, Tuple
 from email.utils import formataddr
 from src.gmail_api_sender import send_html_email
+from .hf_retry import upload_file_with_retry
 
 # Import new v1.3 processors and components
 from .phase_0_processor import run_phase_0_extraction, extract_company_name
@@ -53,7 +55,7 @@ def save_log_entry_hf_dataset(
         log_bytes = io.BytesIO(log_content.encode('utf-8'))
         print(f"HF Saver (background_processor): Attempting to upload log to: {DATASET_REPO_ID}/{log_filename_in_repo}")
 
-        upload_file(
+        upload_file_with_retry(
             path_or_fileobj=log_bytes,
             path_in_repo=log_filename_in_repo,
             repo_id=DATASET_REPO_ID,
@@ -95,7 +97,7 @@ def save_section_hf_dataset(
         section_bytes = io.BytesIO(section_content.encode('utf-8'))
         print(f"HF Saver (background_processor): Attempting to upload section {section_num}{filename_suffix} to: {DATASET_REPO_ID}/{section_filename_in_repo}")
 
-        upload_file(
+        upload_file_with_retry(
             path_or_fileobj=section_bytes,
             path_in_repo=section_filename_in_repo,
             repo_id=DATASET_REPO_ID,
@@ -137,7 +139,7 @@ def save_profile_hf_dataset(
         profile_bytes = io.BytesIO(profile_content.encode('utf-8'))
         print(f"HF Saver (background_processor): Attempting to upload final profile ({content_type}) to: {DATASET_REPO_ID}/{profile_filename_in_repo}")
 
-        upload_file(
+        upload_file_with_retry(
             path_or_fileobj=profile_bytes,
             path_in_repo=profile_filename_in_repo,
             repo_id=DATASET_REPO_ID,
@@ -382,4 +384,5 @@ def _generate_section_with_llamaindex(
         append_log_func(f"S{section_num}: CRITICAL ERROR during 5-step generation: {e}"); traceback.print_exc()
         error_html = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p class="error">Processing failed for this section: {e}</p></div>'
         return section_num, error_html, True
+
 # --- END OF NEW v1.3 GENERATION FUNCTIONS ---
