@@ -141,7 +141,7 @@ def insight_improvement_response(
         f"INSTRUCTIONS:\n"
         f"1. Rewrite the 'Original Draft Answer' to incorporate the deeper analysis and strategic connections suggested by the 'Insight Critique'.\n"
         f"2. Use the 'Context' to find the evidence for your new insights.\n"
-        f"3. Go beyond simple data reporting. Explain the implications of the facts. Keep it as concise as you can.\n"
+        f"3. Go beyond simple data reporting. Explain the implications of the facts. Keep it as concise as you can and cut out filler words and filler phrases. Delete any sentences that are not relevant to the initial instruction.\n"
         f"4. Ensure the final output is a single, complete HTML section that adheres to all original formatting rules.\n\n"
         f"FINAL INSIGHTFUL HTML FOR SECTION {section_num}:"
     )

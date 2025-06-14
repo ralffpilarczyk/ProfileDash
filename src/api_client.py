@@ -12,6 +12,7 @@ import random
 import google.generativeai as genai
 import traceback
 import google.api_core.exceptions
+from .config import GEMINI_MODEL_NAME
 
 # Simple cache for API responses
 api_cache = {}
@@ -147,7 +148,8 @@ def cached_generate_content(model, prompt_or_input_list, section_num=None, cache
 
 def create_model_config(temperature=0.5, top_p=0.9, top_k=50):
     """Creates a GenerativeModel instance with specific configuration."""
-    model_name = "gemini-1.5-flash-latest" # Using latest Flash model
+    # Always pull the model name from the central definition in app.py
+    model_name = GEMINI_MODEL_NAME
     print(f"API Client: Creating model: {model_name} with temp={temperature}, top_p={top_p}, top_k={top_k}")
     try:
         safety_settings = [

@@ -7,13 +7,10 @@ from datetime import datetime
 from huggingface_hub import HfApi, upload_file, hf_hub_download
 import io
 import base64
-from sendgrid.helpers.mail import (
-    Mail, Email, To, Content, Attachment, FileContent, FileName,
-    FileType, Disposition
-)
 import google.generativeai as genai
-import sendgrid
 from typing import List, Dict, Tuple
+from email.utils import formataddr
+from src.gmail_api_sender import send_html_email
 
 # Import new v1.3 processors and components
 from .phase_0_processor import run_phase_0_extraction, extract_company_name
@@ -275,35 +272,37 @@ def execute_full_profile_workflow(
         
         save_profile_hf_dataset(final_html, "html_final", run_id, company_name, user_email, hf_api_client, hf_token, dataset_repo_id, "_final")
 
-        if final_html and sg_client:
-            append_bg_log("Preparing final email notification...")
-            encoded_content = base64.b64encode(final_html.encode('utf-8')).decode('ascii')
-            attachment = Attachment(
-                FileContent(encoded_content), FileName(f"{company_name.replace(' ', '_')}_Profile.html"),
-                FileType('text/html'), Disposition('attachment')
-            )
-            message = Mail(
-                from_email=Email(sender_email, "ProfileDash"), to_emails=To(user_email),
-                subject=f"ProfileDash: Your Company Profile for {company_name} is Ready",
-                html_content=Content("text/html", f"<p>The attached report for <strong>{company_name}</strong> is complete.</p><p>(Run ID: {run_id})</p>")
-            )
-            message.attachment = attachment
-            response = sg_client.client.mail.send.post(request_body=message.get())
-            append_bg_log(f"Final profile email sent, status code: {response.status_code}")
+        # -- Send e-mail via Gmail API --
+        gmail_user = os.getenv("GMAIL_USER", "ProfileDash.NoReply@gmail.com")
+        if final_html:
+            append_bg_log("Sending final e-mail via Gmail API…")
+            try:
+                send_html_email(
+                    from_addr=gmail_user,
+                    to_addr=user_email,
+                    subject=f"ProfileDash: Your Company Profile for {company_name} is Ready",
+                    html_body=f"<p>The attached report for <strong>{company_name}</strong> is complete.</p><p>(Run ID: {run_id})</p>",
+                    attachment_html=final_html,
+                    attachment_name=f"{company_name.replace(' ', '_')}_Profile.html",
+                )
+                append_bg_log("Final profile e-mail sent (Gmail API).")
+            except Exception as e_mail:
+                append_bg_log(f"Gmail API send failed: {e_mail}")
         
     except Exception as e:
         append_bg_log(f"CRITICAL WORKFLOW ERROR: {e}"); traceback.print_exc()
         save_log_entry_hf_dataset(user_email, {"event": "RunFailed", "runId": run_id, "error": str(e)}, hf_api_client, hf_token, dataset_repo_id)
-        if sg_client:
-            try:
-                fail_msg = Mail(
-                    from_email=Email(sender_email,"ProfileDash"), to_emails=To(user_email),
-                    subject=f"ProfileDash: Profile Generation FAILED for run {run_id[:8]}",
-                    html_content=Content("text/html", f"<p>Profile generation failed critically.</p><p>Error: {e}</p><p>(Run ID: {run_id})</p>")
-                )
-                sg_client.client.mail.send.post(request_body=fail_msg.get())
-            except Exception as email_fail_e:
-                append_bg_log(f"Could not send critical failure email: {email_fail_e}")
+        gmail_user = os.getenv("GMAIL_USER", "ProfileDash.NoReply@gmail.com")
+        try:
+            fail_body = f"<p>Profile generation failed critically.</p><p>Error: {e}</p><p>(Run ID: {run_id})</p>"
+            send_html_email(
+                from_addr=gmail_user,
+                to_addr=user_email,
+                subject=f"ProfileDash: Profile Generation FAILED for run {run_id[:8]}",
+                html_body=fail_body,
+            )
+        except Exception as email_fail_e:
+            append_bg_log(f"Could not send critical failure e-mail (Gmail API): {email_fail_e}")
             
     append_bg_log("Background task fully finished.")
 # --- END OF NEW v1.3 execute_full_profile_workflow ---

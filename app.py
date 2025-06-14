@@ -22,12 +22,15 @@ import uuid
 import threading
 import base64
 from huggingface_hub import HfApi, hf_hub_download
-from sendgrid.helpers.mail import (
-    Mail, Email, To, Content, Attachment, FileContent, FileName,
-    FileType, Disposition
-)
-from src.background_processor import execute_full_profile_workflow
-from src.background_processor import save_log_entry_hf_dataset
+# Import Gemini SDK (used elsewhere)
+import google.generativeai as genai
+from src.config import GEMINI_MODEL_NAME
+
+# Ensure this module is importable as 'app' even when executed as __main__
+import sys as _sys
+_sys.modules.setdefault(__name__.split(".")[-1], _sys.modules[__name__])
+
+from src.background_processor import execute_full_profile_workflow, save_log_entry_hf_dataset
 
 # ----------------------------------------------------------------------------
 # Configuration and Constants
@@ -41,7 +44,10 @@ HF_TOKEN = os.environ.get("HF_DATA_TOKEN")
 MAX_WORKERS = 3
 MAX_UPLOAD_FILES = 10 # MODIFIED
 MAX_UPLOAD_MB_PER_FILE = 20 # MODIFIED
-ALLOWED_DOMAIN = "sc.com"
+# Gmail configuration (visible variable)
+GMAIL_USER = os.getenv('GMAIL_USER', 'ProfileDash.NoReply@gmail.com')
+SENDER_EMAIL = GMAIL_USER  # used in outgoing email headers
+sg = None  # placeholder for legacy parameter (SendGrid removed)
 
 # --- Get Google API Key ---
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY') # Fetch the key from environment/secrets
@@ -75,26 +81,7 @@ try:
     from dotenv import load_dotenv
     load_dotenv() # Load .env file for local development
 
-    # --- SendGrid Setup ---
-    import sendgrid
-    from sendgrid.helpers.mail import Mail, Email, To, Content
-
-    SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
-    SENDER_EMAIL = "ProfileDash.NoReply@gmail.com" # Your verified SendGrid sender
-
-    if not SENDGRID_API_KEY:
-        print("Warning: SENDGRID_API_KEY not found. Set it in .env or HF Secrets.")
-        sg = None # Indicate SendGrid is not available
-    else:
-        try:
-            sg = sendgrid.SendGridAPIClient(api_key=SENDGRID_API_KEY)
-            print("SendGrid client initialized.")
-        except Exception as sg_init_e:
-            print(f"Error initializing SendGrid client: {sg_init_e}")
-            sg = None # Indicate SendGrid is not available
-
     # --- Google AI Setup (will be configured dynamically per request) ---
-    import google.generativeai as genai
     # No global genai.configure() here anymore
 
 except ImportError as e:
@@ -113,10 +100,10 @@ def get_permitted_users():
     """
     Retrieves and validates the list of permitted users from the Hugging Face dataset.
     """
-    fallback_config = {"allowed_domains": [ALLOWED_DOMAIN.lower()], "allowed_emails": []}
+    fallback_config = {"allowed_domains": [], "allowed_emails": []}
     
     if not HF_TOKEN or not api or "your-username" in DATASET_REPO_ID:
-        print(f"WARNING: Cannot fetch permitted users config. HF Token/Repo ID not configured. Using code default: {fallback_config}")
+        print("WARNING: Cannot fetch permitted users config. HF credentials missing. Using empty permissions fallback.")
         return fallback_config
 
     try:
@@ -160,12 +147,12 @@ def get_permitted_users():
         return fallback_config
 
 
-def verify_email_and_check_key(email, auth_state):
+def verify_email_and_check_key(email, email_state, is_authenticated):
     """
     Validates user email and API key configuration for authentication.
     """
     if not email or '@' not in email:
-        return "Please enter a valid email address.", auth_state, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
+        return "Please enter a valid email address.", email, False, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
 
     print(f"Checking permissions for email: {email}")
     email_lower = email.lower()
@@ -191,26 +178,17 @@ def verify_email_and_check_key(email, auth_state):
             log_event = {"event": "AuthAttemptDenied", "reason": "Email/Domain not permitted", "appVersion": APP_VERSION}
             save_log_entry_hf_dataset(user_email=email, event_data=log_event, api=api, HF_TOKEN=HF_TOKEN, DATASET_REPO_ID=DATASET_REPO_ID)
          except Exception as log_e: print(f"Error logging AuthAttemptDenied: {log_e}")
-         return "Access denied. Your email address is not authorized.", auth_state, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
-
-    print(f"Email {email} permitted. Checking for API Key...")
-    if not GOOGLE_API_KEY:
-        print(f"CRITICAL ERROR: GOOGLE_API_KEY not found for permitted user {email}.")
-        try:
-            log_event = {"event": "AuthAttemptFailed", "reason": "GOOGLE_API_KEY not found", "appVersion": APP_VERSION}
-            save_log_entry_hf_dataset(user_email=email, event_data=log_event, api=api, HF_TOKEN=HF_TOKEN, DATASET_REPO_ID=DATASET_REPO_ID)
-        except Exception as log_e: print(f"Error logging AuthAttemptFailed (API Key): {log_e}")
-        return "Configuration Error: API key not found. Cannot proceed.", auth_state, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
+         return "Access denied. Your email address is not authorized.", email, False, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
 
     print(f"Email {email} verified and API key found. Authenticating.")
-    auth_state["email"] = email
-    auth_state["authenticated"] = True
+    email_state = email
+    is_authenticated = True
     try:
          log_event = {"event": "AuthSuccess", "appVersion": APP_VERSION}
          save_log_entry_hf_dataset(user_email=email, event_data=log_event, api=api, HF_TOKEN=HF_TOKEN, DATASET_REPO_ID=DATASET_REPO_ID)
     except Exception as log_e: print(f"Error logging AuthSuccess: {log_e}")
 
-    return f"Email {email} verified. Proceed to upload documents.", auth_state, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
+    return f"Email {email} verified. Proceed to upload documents.", email, is_authenticated, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
 
 def reset_interface():
     """
@@ -227,25 +205,24 @@ def reset_interface():
         gr.update(visible=False)
     )
 
-def handle_generate_click(file_paths, auth_state):
+def handle_generate_click(file_paths, email_state, is_authenticated):
     """
     Initiates the profile generation process in a background thread.
     """
-    user_email = auth_state.get('email')
-    run_id = str(uuid.uuid4())
-
-    if not auth_state.get('authenticated') or not user_email or not file_paths:
-         return "Error: Not authenticated or missing uploaded files.", None, gr.update(visible=False)
+    if not is_authenticated or not email_state or not file_paths:
+         return "Error: Not authenticated or missing uploaded files.", None, None, None, None, None, None, None
 
     temp_paths_copy = list(file_paths) if isinstance(file_paths, list) else [file_paths]
-    print(f"UI Thread: Starting background task for run {run_id} for user {user_email}")
+    # Generate a unique identifier for this run (used in logging and uploads)
+    run_id = uuid.uuid4().hex
+    print(f"UI Thread: Starting background task for run {run_id} for user {email_state}")
 
     try:
         thread = threading.Thread(
             target=execute_full_profile_workflow,
             args=(
                 run_id,
-                user_email,
+                email_state,
                 GOOGLE_API_KEY,
                 temp_paths_copy,
                 sg,
@@ -265,10 +242,10 @@ def handle_generate_click(file_paths, auth_state):
             first_filename = input_filenames[0] if input_filenames else "Unknown_Company"
             run_company_name = os.path.splitext(first_filename)[0].replace('_', ' ')
             log_event = {"event": "RunSubmitted", "runId": run_id, "companyName": run_company_name, "fileCount": len(input_filenames)}
-            save_log_entry_hf_dataset(user_email=user_email, event_data=log_event, api=api, HF_TOKEN=HF_TOKEN, DATASET_REPO_ID=DATASET_REPO_ID)
+            save_log_entry_hf_dataset(user_email=email_state, event_data=log_event, api=api, HF_TOKEN=HF_TOKEN, DATASET_REPO_ID=DATASET_REPO_ID)
         except Exception as log_e: print(f"Error logging RunSubmitted: {log_e}")
 
-        status_message = f"Profile generation has started. The final profile will be emailed to {user_email} upon completion (this may take 20-40 minutes depending on document size). You can close this window now."
+        status_message = f"Profile generation has started. The final profile will be emailed to {email_state} upon completion (this may take 20-40 minutes depending on document size). You can close this window now."
 
         return (
             gr.update(visible=False),
@@ -276,6 +253,7 @@ def handle_generate_click(file_paths, auth_state):
             gr.update(visible=True),
             status_message,
             None,
+            gr.update(visible=False),
             gr.update(visible=False),
             gr.update(visible=False)
         )
@@ -290,14 +268,15 @@ def handle_generate_click(file_paths, auth_state):
             error_message,
             None,
             gr.update(visible=False),
+            gr.update(visible=False),
             gr.update(visible=False)
         )
 
-def handle_generate_click_with_status(file_paths, auth_state):
+def handle_generate_click_with_status(file_paths, email_state, is_authenticated):
     """
     Enhanced version of handle_generate_click that includes status container management.
     """
-    result = handle_generate_click(file_paths, auth_state)
+    result = handle_generate_click(file_paths, email_state, is_authenticated)
     return [*result, gr.update(visible=True)]
 
 # ----------------------------------------------------------------------------
@@ -441,10 +420,8 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     """)
 
     # --- State Variables ---
-    auth_state = gr.State({
-        "email": None,
-        "authenticated": False
-    })
+    email_state = gr.State("")
+    is_authenticated = gr.State(False)
     
     with gr.Column(visible=True, elem_classes="container") as intro_section:
         gr.Markdown(f"""
@@ -465,17 +442,17 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         with gr.Column(visible=True) as email_input_row:
             email_input = gr.Textbox(
                 label="Enter Your Email", 
-                placeholder="your.email@domain.com"
+                placeholder="your.email@domain.com",
+                elem_id="email-input"
             )
             verify_email_button = gr.Button(
                 "Verify Email",
-                variant="primary", 
-                scale=1
+                variant="primary"
             )
             verify_email_loading = gr.HTML(
                 visible=False,
                 value='<div class="loading-spinner"></div> Verifying email...',
-                elem_id="verify-email-loading-id"
+                elem_id="verify-email-loading"
             )
                 
     # --- Main Application Interface ---
@@ -484,7 +461,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         
         pdf_upload = gr.File(
             label="Upload PDF Documents",
-            file_count=MAX_UPLOAD_FILES,
+            file_count="multiple",
             file_types=[".pdf"],
             type="filepath"
         )
@@ -534,18 +511,18 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
     verify_email_button.click(
         fn=verify_email_and_check_key,
-        inputs=[email_input, auth_state],
-        outputs=[auth_status, auth_state, auth_section, main_app_section, verify_email_loading]
+        inputs=[email_input, email_state, is_authenticated],
+        outputs=[auth_status, email_state, is_authenticated, auth_section, main_app_section, verify_email_loading]
     )
     email_input.submit(
         fn=verify_email_and_check_key,
-        inputs=[email_input, auth_state],
-        outputs=[auth_status, auth_state, auth_section, main_app_section, verify_email_loading]
+        inputs=[email_input, email_state, is_authenticated],
+        outputs=[auth_status, email_state, is_authenticated, auth_section, main_app_section, verify_email_loading]
     )
 
     generate_button.click(
         fn=handle_generate_click_with_status,
-        inputs=[pdf_upload, auth_state],
+        inputs=[pdf_upload, email_state, is_authenticated],
         outputs=[
             pdf_upload,
             generate_row,
@@ -572,8 +549,11 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         ]
     )
 
+
 # --- Launch the Gradio app ---
 if __name__ == "__main__":
     demo.queue()
-    demo.launch(share=False, server_name="0.0.0.0")
-# --- END OF CHUNK 4 of 4: Event Connections & Launch ---
+    demo.launch(server_name="0.0.0.0",
+                server_port=7860)        # what HF expects
+
+# (Email sending now handled via Gmail inside background_processor)

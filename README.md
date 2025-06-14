@@ -1,10 +1,11 @@
 ---
-title: ProfileDash
+title: ProfileDashDev
 emoji: 🚀
-colorFrom: blue
-colorTo: green
+colorFrom: indigo
+colorTo: gray
 sdk: gradio
-sdk_version: "5.23.1" # Or another recent Gradio 4.x version
+sdk_version: 4.44.1
+python_version: 3.11
 app_file: app.py
 pinned: false
 ---

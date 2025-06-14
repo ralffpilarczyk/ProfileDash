@@ -9,6 +9,7 @@ from llama_index.llms.gemini import Gemini  # CORRECTED
 from llama_index.embeddings.gemini import GeminiEmbedding # CORRECTED
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document
+from .config import GEMINI_MODEL_NAME
 
 class HfDatasetReader(BaseReader):
     """A custom LlamaIndex reader to load files from an in-memory dict."""
@@ -40,7 +41,7 @@ def create_semantic_index(
     """
     print("LlamaIndex: Initializing models and settings...")
     # Initialize LlamaIndex components with the provided API key
-    Settings.llm = Gemini(model_name="models/gemini-1.5-flash-latest", api_key=api_key)
+    Settings.llm = Gemini(model_name=f"models/{GEMINI_MODEL_NAME}", api_key=api_key)
     Settings.embed_model = GeminiEmbedding(model_name="models/embedding-001", api_key=api_key)
     
     print("LlamaIndex: Loading documents with custom in-memory reader...")

@@ -1,16 +1,18 @@
 # --- START OF FILE src/phase_0_processor.py ---
 import os
 import time
-import re
 import json
 import traceback
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Tuple
 import io
+import tempfile
 
 import google.generativeai as genai
 import PyPDF2
 from huggingface_hub import HfApi, upload_file
+from .config import GEMINI_MODEL_NAME
 
 from .table_postprocessor import TablePostProcessor
 
@@ -65,7 +67,7 @@ def _process_single_pdf(
     safe_artifact_name = f"doc_{doc_index:02d}_{os.path.splitext(filename)[0].replace(' ', '_')}"
     
     # Setup for extraction
-    extraction_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    extraction_model = genai.GenerativeModel(GEMINI_MODEL_NAME)
     extraction_prompt_template = """
     Analyze pages {start_page}-{end_page} of the provided PDF and extract two types of content: Tables and Narrative Text.
 
@@ -97,7 +99,15 @@ def _process_single_pdf(
     try:
         # 1. Upload to Gemini File API
         print(f"Phase 0 Worker '{filename}': Uploading to File API...")
-        gemini_file = genai.upload_file(path=file_bytes, display_name=filename, mime_type="application/pdf")
+        temp_pdf_path = None
+        # Write the uploaded PDF bytes to a temporary file because the Gemini
+        # File API expects a filesystem path (str or os.PathLike), not raw
+        # bytes. The file will be deleted in the finally block.
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
+            tmp_pdf.write(file_bytes)
+            temp_pdf_path = tmp_pdf.name
+
+        gemini_file = genai.upload_file(path=temp_pdf_path, display_name=filename, mime_type="application/pdf")
         while gemini_file.state.name == "PROCESSING":
             time.sleep(5)
             gemini_file = genai.get_file(name=gemini_file.name)
@@ -116,9 +126,27 @@ def _process_single_pdf(
             print(f"Phase 0 Worker '{filename}': Extracting content for pages {page_ref}...")
             
             prompt = extraction_prompt_template.format(start_page=start_page, end_page=end_page, page_ref=page_ref)
-            response = extraction_model.generate_content([prompt, gemini_file])
-            all_raw_extracted_content += response.text + "\n\n"
-            time.sleep(2) # Rate limiting
+
+            # Retry up to 3 times with exponential back-off for transient errors such as
+            # 504 Deadline Exceeded or rate limits.
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = extraction_model.generate_content([prompt, gemini_file])
+                    all_raw_extracted_content += response.text + "\n\n"
+                    break  # success, exit retry loop
+                except Exception as extract_err:
+                    if attempt < max_attempts:
+                        wait_seconds = 5 * (2 ** (attempt - 1))
+                        print(
+                            f"Phase 0 Worker '{filename}': attempt {attempt} failed for pages {page_ref}: {extract_err}. "
+                            f"Retrying in {wait_seconds}s…"
+                        )
+                        time.sleep(wait_seconds)
+                    else:
+                        raise  # bubble up after final failure
+
+            time.sleep(1)  # small pause to respect rate limits
 
         # 3. Separate content types
         table_markdown_raw = ""
@@ -169,6 +197,12 @@ def _process_single_pdf(
                 print(f"Phase 0 Worker '{filename}': Cleaned up Gemini File.")
             except Exception as delete_e:
                 print(f"Phase 0 Worker '{filename}': Non-critical error cleaning up Gemini file: {delete_e}")
+        # Remove the temporary file from disk
+        try:
+            if temp_pdf_path and os.path.exists(temp_pdf_path):
+                os.remove(temp_pdf_path)
+        except Exception:
+            pass
 
 
 def run_phase_0_extraction(
@@ -203,7 +237,7 @@ def extract_company_name(text_md_contents: List[str]) -> str:
     for content in text_md_contents:
         combined_sample += content[:2000] + "\n\n"
 
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
     prompt = f"""
     Based on the following text extracted from one or more corporate documents, what is the primary, official name of the company being discussed?
     Provide only the company name and nothing else (e.g., no "The company name is...").
