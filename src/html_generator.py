@@ -53,40 +53,6 @@ def clean_llm_output(content, section_num=None, section_title=None):
         # If no section info, just return the content stripped of ```html
         return content
 
-# --- Folder/File Operations (Kept from Old Version, not used by current app.py) ---
-def create_profile_folder(company_name):
-    """Create a unique folder for storing profile sections"""
-    print("HTML Generator: create_profile_folder called (inactive in current app).")
-    clean_name = ''.join(c for c in company_name if c.isalnum() or c in [' ', '_', '-']).replace(' ', '_')
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder_name = f"profile_{clean_name}_{timestamp}"
-    try:
-        if not os.path.exists(folder_name):
-            os.makedirs(folder_name)
-        return folder_name, timestamp
-    except Exception as e:
-        print(f"HTML Generator Error creating folder {folder_name}: {e}")
-        return ".", timestamp # Fallback to current directory
-
-def save_section(profile_folder, section_number, content):
-    """Save a section's HTML content to a file."""
-    print(f"HTML Generator: save_section {section_number} called (inactive in current app).")
-    if not isinstance(content, str): content = str(content)
-    try:
-        filepath = os.path.join(profile_folder, f"section_{section_number}.html")
-        with open(filepath, "w", encoding="utf-8") as f: f.write(content)
-    except Exception as e: print(f"HTML Generator Error saving section {section_number} to {profile_folder}: {e}")
-
-def load_section(profile_folder, section_number):
-    """Load a section's HTML content from a file if it exists."""
-    print(f"HTML Generator: load_section {section_number} called (inactive in current app).")
-    filepath = os.path.join(profile_folder, f"section_{section_number}.html")
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, "r", encoding="utf-8") as f: return f.read()
-        except Exception as e: print(f"HTML Generator Error loading section {section_number} from {filepath}: {e}")
-    return None
-# --- End Folder/File Operations ---
 
 def validate_html(html_content):
     """Simplified HTML validation, focusing on structure and critical tags."""
